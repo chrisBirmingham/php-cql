@@ -6,6 +6,8 @@
 
 namespace CassandraNative;
 
+use CassandraNative\Statement\PreparedStatement;
+
 /**
  * Cassanda Connector
  *
@@ -126,12 +128,12 @@ class Cassandra
     /**
      * @var int
      */
-    private int $timeout_connect = 2;
+    private int $connectionTimeout = 2;
 
     /**
      * @var int
      */
-    private int $timeout_read = 120;
+    private int $readTimeout = 120;
 
     /**
      * @var bool
@@ -165,17 +167,17 @@ class Cassandra
     /**
      * @param int $timeout
      */
-    public function setTimeoutConnect(int $timeout): void
+    public function setConnectTimeout(int $timeout): void
     {
-        $this->timeout_connect = $timeout;
+        $this->connectTimeout = $timeout;
     }
 
     /**
      * @param int $timeout
      */
-    public function setTimeoutRead(int $timeout): void
+    public function setReadTimeout(int $timeout): void
     {
-        $this->timeout_read = $timeout;
+        $this->readTimeout = $timeout;
     }
 
     // Tries a connection to a Cassandra server
@@ -214,7 +216,7 @@ class Cassandra
             $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
             $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
 
-            stream_set_timeout($this->socket, $this->timeout_connect);
+            stream_set_timeout($this->socket, $this->connectTimeout);
 
             // Reads incoming frame - should be immediate do we don't
             // wait for longer than connection timeout, in case Cassandra is non responsive
@@ -223,7 +225,7 @@ class Cassandra
                 return;
             }
 
-            stream_set_timeout($this->socket, $this->timeout_read);
+            stream_set_timeout($this->socket, $this->readTimeout);
 
             // Checks if an AUTHENTICATE frame was received
             if ($frame['opcode'] == self::OPCODE_AUTHENTICATE) {
@@ -345,20 +347,26 @@ class Cassandra
      *
      * @param string $cql The query to prepare.
      *
-     * @return ?array The statement's information to be used with the execute
+     * @return PreparedStatement|false The statement's information to be used with the execute
      *               method. NULL on error.
      *
      * @throws \Exception
      *
      * @access public
      */
-    public function prepare(string $cql): ?array
+    public function prepare(string $cql): PreparedStatement|false
     {
         // Prepares the frame's body
         $frame = $this->packLongString($cql);
 
         // Writes a PREPARE frame and return the result
-        return $this->requestResult(self::OPCODE_PREPARE, $frame);
+        $retval = $this->requestResult(self::OPCODE_PREPARE, $frame);
+
+        if (!$retval) {
+            return false;
+        }
+
+        return new PreparedStatement($retval['id'], $retval['columns']);
     }
 
     /**
@@ -366,8 +374,6 @@ class Cassandra
      *
      * @param array $stmt        The prepared statement as returned from the
      *                           prepare method.
-     * @param array $values      Values to bind in key=>value format where key is
-     *                           the column's name.
      * @param int   $consistency Consistency level for the operation.
      *
      * @return array Result of the execution. Might be an array of rows (for
@@ -379,17 +385,17 @@ class Cassandra
      *
      * @access public
      */
-    public function execute(array $stmt, array $values, int $consistency = self::CONSISTENCY_ALL): array
+    public function execute(PreparedStatement $stmt, int $consistency = self::CONSISTENCY_ALL): array
     {
         // Prepares the frame's body - <id><count><values map>
-        $frame = base64_decode($stmt['id']);
+        $frame = base64_decode($stmt->getId());
         $frame = $this->packString($frame) .
             $this->packShort($consistency) .
             $this->packByte(0x01) . // values only
             $this->packShort(count($values));
 
-        foreach ($stmt['columns'] as $key => $column) {
-            $value = $values[$key];
+        foreach ($stmt->getColumns() as $key => $column) {
+            $value = $stmt->getBindValue($key);
 
             $data = $this->packValue(
                 $value,
@@ -637,8 +643,9 @@ class Cassandra
         if ($readPk) {
             $pk_count = $this->popInt($body, $bodyOffset);
 
-            for ($i = 0; $i < $pk_count; $i++)
+            for ($i = 0; $i < $pk_count; $i++) {
                 $this->popShort($body, $bodyOffset);
+            }
         }
 
         $global_table_spec = ($flags & 0x0001);
@@ -665,17 +672,20 @@ class Cassandra
                 ($column_type == self::COLUMNTYPE_SET)
             ) {
                 $column_subtype1 = $this->popShort($body, $bodyOffset);
-                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM)
+                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM) {
                     $column_subtype1 = $this->popString($body, $bodyOffset);
+                }
                 $column_subtype2 = 0;
             } elseif ($column_type == self::COLUMNTYPE_MAP) {
                 $column_subtype1 = $this->popShort($body, $bodyOffset);
-                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM)
+                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM) {
                     $column_subtype1 = $this->popString($body, $bodyOffset);
+                }
 
                 $column_subtype2 = $this->popShort($body, $bodyOffset);
-                if ($column_subtype2 == self::COLUMNTYPE_CUSTOM)
+                if ($column_subtype2 == self::COLUMNTYPE_CUSTOM) {
                     $column_subtype2 = $this->popString($body, $bodyOffset);
+                }
             } else {
                 $column_subtype1 = 0;
                 $column_subtype2 = 0;
@@ -749,15 +759,15 @@ class Cassandra
     public function packValue(mixed $value, int $type, int $subtype1 = 0, int $subtype2 = 0): string
     {
         switch ($type) {
-            case self::COLUMNTYPE_CUSTOM:
+            case self::COLUMNTYPE_CUSTOM: // Fallthrough
             case self::COLUMNTYPE_BLOB:
-                return $this->pack_blob($value);
-            case self::COLUMNTYPE_ASCII:
-            case self::COLUMNTYPE_TEXT:
+                return $this->packBlob($value);
+            case self::COLUMNTYPE_ASCII: // Fallthrough
+            case self::COLUMNTYPE_TEXT: // Fallthrough
             case self::COLUMNTYPE_VARCHAR:
                 return $value;
-            case self::COLUMNTYPE_BIGINT:
-            case self::COLUMNTYPE_COUNTER:
+            case self::COLUMNTYPE_BIGINT: // Fallthrough
+            case self::COLUMNTYPE_COUNTER: // Fallthrough
             case self::COLUMNTYPE_TIMESTAMP:
                 return $this->packBigint($value);
             case self::COLUMNTYPE_BOOLEAN:
@@ -770,14 +780,14 @@ class Cassandra
                 return $this->packFloat($value);
             case self::COLUMNTYPE_INT:
                 return $this->packInt($value);
-            case self::COLUMNTYPE_UUID:
+            case self::COLUMNTYPE_UUID: // Fallthrough
             case self::COLUMNTYPE_TIMEUUID:
                 return $this->packUuid($value);
             case self::COLUMNTYPE_VARINT:
                 return $this->packVarInt($value);
             case self::COLUMNTYPE_INET:
                 return $this->packInet($value);
-            case self::COLUMNTYPE_LIST:
+            case self::COLUMNTYPE_LIST: // Fallthrough
             case self::COLUMNTYPE_SET:
                 return $this->packList($value, $subtype1);
             case self::COLUMNTYPE_MAP:
@@ -809,15 +819,15 @@ class Cassandra
         }
 
         switch ($type) {
-            case self::COLUMNTYPE_CUSTOM:
+            case self::COLUMNTYPE_CUSTOM: // Fallthrough
             case self::COLUMNTYPE_BLOB:
                 return $this->unpackBlob($content);
-            case self::COLUMNTYPE_ASCII:
-            case self::COLUMNTYPE_TEXT:
+            case self::COLUMNTYPE_ASCII: // Fallthrough
+            case self::COLUMNTYPE_TEXT: // Fallthrough
             case self::COLUMNTYPE_VARCHAR:
                 return $content;
-            case self::COLUMNTYPE_BIGINT:
-            case self::COLUMNTYPE_COUNTER:
+            case self::COLUMNTYPE_BIGINT: // Fallthrough
+            case self::COLUMNTYPE_COUNTER: // Fallthrough
             case self::COLUMNTYPE_TIMESTAMP:
                 return $this->unpackBigint($content);
             case self::COLUMNTYPE_BOOLEAN:
@@ -830,14 +840,14 @@ class Cassandra
                 return $this->unpackFloat($content);
             case self::COLUMNTYPE_INT:
                 return $this->unpackInt($content);
-            case self::COLUMNTYPE_UUID:
+            case self::COLUMNTYPE_UUID: // Fallthrough
             case self::COLUMNTYPE_TIMEUUID:
                 return $this->unpackUuid($content);
             case self::COLUMNTYPE_VARINT:
                 return $this->unpackVarInt($content);
             case self::COLUMNTYPE_INET:
                 return $this->unpackInet($content);
-            case self::COLUMNTYPE_LIST:
+            case self::COLUMNTYPE_LIST: // Fallthrough
             case self::COLUMNTYPE_SET:
                 return $this->unpackList($content, $subtype1);
             case self::COLUMNTYPE_MAP:
@@ -855,7 +865,7 @@ class Cassandra
      * @return string Binary form of the value.
      * @access private
      */
-    private function pack_blob(string $value): string
+    private function packBlob(string $value): string
     {
         if (str_starts_with($value, '0x')) {
             $value = pack('H*', substr($value, 2));
