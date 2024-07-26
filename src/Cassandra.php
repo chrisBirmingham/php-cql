@@ -6,6 +6,7 @@
 
 namespace CassandraNative;
 
+use CassandraNative\Cluster\ClusterOptions;
 use CassandraNative\Result\Rows;
 use CassandraNative\Statement\PreparedStatement;
 use CassandraNative\Statement\SimpleStatement;
@@ -120,13 +121,6 @@ class Cassandra
 
     const PROTOCOL_VERSION  = 4;
 
-    const ATTR_TIMEOUT = 0x0001;
-    const ATTR_PERSIST = 0x0002;
-    const ATTR_SSL_VERIFY_SERVER_CERT = 0x0003;
-    const ATTR_SSL_KEY = 0x0004;
-    const ATTR_SSL_CERT = 0x0005;
-    const ATTR_SSL_CA = 0x0006;
-
     /* Set to 1 if blobs should return as raw string */
     public $rawBlobs = 0;
 
@@ -135,20 +129,9 @@ class Cassandra
      */
     private $socket = false;
 
-    /**
-     * @var bool
-     */
-    private bool $persistent = false;
-
-    /**
-     * @var string
-     */
     private string $fullFrame = '';
 
-    /**
-     * @var int
-     */
-    private int $timeout = 0;
+    private ClusterOptions $options;
 
     /**
      * @param string $host Host name/IP to connect to use 'p:' as prefix for persistent connections.
@@ -158,18 +141,10 @@ class Cassandra
      * @param int $port Destination port (default: 9042).
      * @throws \Exception
      */
-    public function __construct(
-        string $host,
-        string $user = '',
-        string $passwd = '',
-        string $dbname = '',
-        int $port = 9042,
-        array $options = []
-    ) {
-        $this->timeout = $options[self::ATTR_TIMEOUT] ?? 60;
-        $this->persistent = $options[self::ATTR_PERSIST] ?? false;
-
-        $this->connect($host, $user, $passwd, $dbname, $port);
+    public function __construct(ClusterOptions $options)
+    {
+        $this->options = $options;
+        $this->connect();
     }
 
     /* Makes sure to close() upon destruct */
@@ -184,18 +159,18 @@ class Cassandra
      *
      * @throws \Exception
      */
-    private function connect(
-        string $host,
-        string $user = '',
-        string $passwd = '',
-        string $dbname = '',
-        int $port = 9042
-    ): void {
+    private function connect(): void
+    {
         // Connects to server
-        if ($this->persistent) {
-            $connection = @pfsockopen($host, $port, $errno, $errstr, $this->timeout);
+        $host = $this->options->getHost();
+        $port = $this->options->getPort();
+        $connectTimeout = $this->options->getConnectTimeout();
+        $persistent = $this->options->getPersistentSessions();
+
+        if ($persistent) {
+            $connection = @pfsockopen($host, $port, $errno, $errstr, $connectTimeout);
         } else {
-            $connection = @fsockopen($host, $port, $errno, $errstr, $this->timeout);
+            $connection = @fsockopen($host, $port, $errno, $errstr, $connectTimeout);
         }
 
         if ($connection === false) {
@@ -205,7 +180,7 @@ class Cassandra
         $this->socket = $connection;
 
         // Don't send startup & authentication if we're using a persistent connection
-        if (!$this->persistent || (ftell($connection) == 0)) {
+        if (!$persistent || (ftell($connection) == 0)) {
             // Writes a STARTUP frame
             $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
             $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
@@ -214,7 +189,7 @@ class Cassandra
             // wait for longer than connection timeout, in case Cassandra is non responsive
             $frame = $this->readFrame();
 
-            stream_set_timeout($this->socket, $this->timeout);
+            stream_set_timeout($this->socket, $this->options->getRequestTimeout());
 
             // Checks if an AUTHENTICATE frame was received
             if ($frame['opcode'] == self::OPCODE_AUTHENTICATE) {
@@ -254,7 +229,7 @@ class Cassandra
      */
     public function close(bool $closePersistent = false): void
     {
-        if ($this->socket && ($closePersistent || (!$this->persistent))) {
+        if ($this->socket && ($closePersistent || (!$this->options->getPersistentSessions()))) {
             fclose($this->socket);
             $this->socket = false;
         }
@@ -278,8 +253,10 @@ class Cassandra
     public function execute(
         StatementInterface $stmt,
         array $values = [],
-        int $consistency = self::CONSISTENCY_ALL
+        int $consistency = null
     ): Rows {
+        $consistency ??= $this->options->getDefaultConsistency();
+
         $rows = match(true) {
             $stmt instanceof PreparedStatement =>  $this->executePreparedStatement($stmt, $values, $consistency),
             $stmt instanceof SimpleStatement => $this->executeSimpleStatement($stmt, $values, $consistency)
@@ -422,10 +399,10 @@ class Cassandra
         // Parses the incoming frame
         if ($frame['opcode'] == self::OPCODE_RESULT) {
             return $this->parseResult($frame['body']);
-        } else {
-            $this->close(true);
-            throw new \Exception('Unknown opcode ' . $frame['opcode']);
         }
+
+        $this->close(true);
+        throw new \Exception('Unknown opcode ' . $frame['opcode']);
     }
 
     /**
@@ -511,7 +488,6 @@ class Cassandra
             $bodyOffset = 4;  // Must be passed by reference
             $errMsg = $this->popString($body, $bodyOffset);
 
-            $this->close(true);
             throw new \Exception('Error 0x' . sprintf('%04X', $errCode) . ' received from server: ' . $errMsg);
         }
 
