@@ -6,7 +6,10 @@
 
 namespace CassandraNative;
 
+use CassandraNative\Result\Rows;
 use CassandraNative\Statement\PreparedStatement;
+use CassandraNative\Statement\SimpleStatement;
+use CassandraNative\Statement\StatementInterface;
 
 /**
  * Cassanda Connector
@@ -117,6 +120,13 @@ class Cassandra
 
     const PROTOCOL_VERSION  = 4;
 
+    const ATTR_TIMEOUT = 0x0001;
+    const ATTR_PERSIST = 0x0002;
+    const ATTR_SSL_VERIFY_SERVER_CERT = 0x0003;
+    const ATTR_SSL_KEY = 0x0004;
+    const ATTR_SSL_CERT = 0x0005;
+    const ATTR_SSL_CA = 0x0006;
+
     /* Set to 1 if blobs should return as raw string */
     public $rawBlobs = 0;
 
@@ -124,16 +134,6 @@ class Cassandra
      * @var resource|false
      */
     private $socket = false;
-
-    /**
-     * @var int
-     */
-    private int $connectionTimeout = 2;
-
-    /**
-     * @var int
-     */
-    private int $readTimeout = 120;
 
     /**
      * @var bool
@@ -146,6 +146,11 @@ class Cassandra
     private string $fullFrame = '';
 
     /**
+     * @var int
+     */
+    private int $timeout = 0;
+
+    /**
      * @param string $host Host name/IP to connect to use 'p:' as prefix for persistent connections.
      * @param string $user Username in case authentication is needed.
      * @param string $passwd Password in case authentication is needed.
@@ -153,8 +158,17 @@ class Cassandra
      * @param int $port Destination port (default: 9042).
      * @throws \Exception
      */
-    public function __construct(string $host, string $user = '', string $passwd = '', string $dbname = '', int $port = 9042)
-    {
+    public function __construct(
+        string $host,
+        string $user = '',
+        string $passwd = '',
+        string $dbname = '',
+        int $port = 9042,
+        array $options = []
+    ) {
+        $this->timeout = $options[self::ATTR_TIMEOUT] ?? 60;
+        $this->persistent = $options[self::ATTR_PERSIST] ?? false;
+
         $this->connect($host, $user, $passwd, $dbname, $port);
     }
 
@@ -164,44 +178,29 @@ class Cassandra
         $this->close();
     }
 
-    /**
-     * @param int $timeout
-     */
-    public function setConnectTimeout(int $timeout): void
-    {
-        $this->connectTimeout = $timeout;
-    }
-
-    /**
-     * @param int $timeout
-     */
-    public function setReadTimeout(int $timeout): void
-    {
-        $this->readTimeout = $timeout;
-    }
-
     // Tries a connection to a Cassandra server
 
     /**
+     *
      * @throws \Exception
      */
-    private function connect(string $host, string $user = '', string $passwd = '', string $dbname = '', int $port = 9042): void
-    {
+    private function connect(
+        string $host,
+        string $user = '',
+        string $passwd = '',
+        string $dbname = '',
+        int $port = 9042
+    ): void {
         // Lookups host name to IP, if needed
         if ($this->socket) {
             $this->close();
         }
 
-        $this->persistent = str_starts_with($host, 'p:');
-        if ($this->persistent) {
-            $host = substr($host, 2);
-        }
-
         // Connects to server
         if ($this->persistent) {
-            $connection = @pfsockopen($host, $port, $errno, $errstr, $this->timeout_connect);
+            $connection = @pfsockopen($host, $port, $errno, $errstr, $this->timeout);
         } else {
-            $connection = @fsockopen($host, $port, $errno, $errstr, $this->timeout_connect);
+            $connection = @fsockopen($host, $port, $errno, $errstr, $this->timeout);
         }
 
         if ($connection === false) {
@@ -216,8 +215,6 @@ class Cassandra
             $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
             $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
 
-            stream_set_timeout($this->socket, $this->connectTimeout);
-
             // Reads incoming frame - should be immediate do we don't
             // wait for longer than connection timeout, in case Cassandra is non responsive
             if (($frame = $this->readFrame()) === false) {
@@ -225,7 +222,7 @@ class Cassandra
                 return;
             }
 
-            stream_set_timeout($this->socket, $this->readTimeout);
+            stream_set_timeout($this->socket, $this->timeout);
 
             // Checks if an AUTHENTICATE frame was received
             if ($frame['opcode'] == self::OPCODE_AUTHENTICATE) {
@@ -255,13 +252,7 @@ class Cassandra
         // Checks if we need to set initial keyspace
         if ($dbname) {
             // Sends a USE query.
-            $res = $this->query('USE ' . $dbname);
-
-            // Checks the validity of the response
-            if (!isset($res[0]) || ($res[0]['keyspace'] != $dbname)) {
-                $this->close(true);
-                throw new \Exception('Unknown keyspace ' . $dbname);
-            }
+            $res = $this->execute(new SimpleStatement('USE ' . $dbname));
         }
     }
 
@@ -283,23 +274,116 @@ class Cassandra
     /**
      * Queries the database using the given CQL.
      *
-     * @param string $cql         The query to run.
+     * @param StatementInterface $stmt The query to run.
      * @param int    $consistency Consistency level for the operation.
      * @param array  $values      Values to bind in a sequential or key=>value format,
      *                            where key is the column's name.
      *
-     * @return array Result of the query. Might be an array of rows (for
+     * @return Rows Result of the query. Might be an array of rows (for
      *               SELECT), or the operation's result (for USE, CREATE,
      *               ALTER, UPDATE).
      *               NULL on error.
      * @throws \Exception
      * @access public
      */
-    public function query(string $cql, int $consistency = self::CONSISTENCY_ALL, array $values = []): array
+    public function execute(
+        StatementInterface $stmt,
+        array $values = [],
+        int $consistency = self::CONSISTENCY_ALL
+    ): Rows {
+        $rows = match(true) {
+            $stmt instanceof PreparedStatement =>  $this->executePreparedStatement($stmt, $values, $consistency),
+            $stmt instanceof SimpleStatement => $this->executeSimpleStatement($stmt, $values, $consistency)
+        };
+
+        return new Rows($rows);
+    }
+
+    /**
+     * Prepares a query statement.
+     *
+     * @param string $cql The query to prepare.
+     *
+     * @return PreparedStatement|false The statement's information to be used with the execute
+     *               method. NULL on error.
+     *
+     * @throws \Exception
+     *
+     * @access public
+     */
+    public function prepare(string $cql): PreparedStatement|false
     {
         // Prepares the frame's body
+        $frame = $this->packLongString($cql);
+
+        // Writes a PREPARE frame and return the result
+        if (($retval = $this->requestResult(self::OPCODE_PREPARE, $frame)) === null) {
+            return false;
+        }
+
+        return new PreparedStatement($retval['id'], $retval['columns']);
+    }
+
+    /**
+     * Executes a prepared statement.
+     *
+     * @param PreparedStatement $stmt The prepared statement as returned from the
+     *                           prepare method.
+     * @param int   $consistency Consistency level for the operation.
+     *
+     * @return array Result of the execution. Might be an array of rows (for
+     *               SELECT), or the operation's result (for USE, CREATE,
+     *               ALTER, UPDATE).
+     *               NULL on error.
+     *
+     * @throws \Exception
+     *
+     * @access public
+     */
+    private function executePreparedStatement(
+        PreparedStatement $stmt,
+        array $values,
+        int $consistency
+    ): array {
+        // Prepares the frame's body - <id><count><values map>
+        $frame = base64_decode($stmt->getId());
+        $frame = $this->packString($frame) .
+            $this->packShort($consistency) .
+            $this->packByte(0x01) . // values only
+            $this->packShort(count($values));
+
+        foreach ($stmt->getColumns() as $key => $column) {
+            $value = $values[$key];
+
+            $data = $this->packValue(
+                $value,
+                $column['type'],
+                $column['subtype1'],
+                $column['subtype2']
+            );
+
+            $frame .= $this->packLongString($data);
+        }
+
+        // Writes a EXECUTE frame and return the result
+        return $this->requestResult(self::OPCODE_EXECUTE, $frame);
+    }
+
+    /**
+     * @param SimpleStatement $stmt
+     * @param array $values
+     * @param int $consistency
+     * @return array
+     * @throws \Exception
+     */
+    private function executeSimpleStatement(
+        SimpleStatement $stmt,
+        array $values,
+        int $consistency
+    ): array {
+        // Prepares the frame's body
         // TODO: Support the new <flags> byte
-        $frame = $this->packLongString($cql) . $this->packShort($consistency);
+        $frame = $this->packLongString($stmt->getStatement()) . $this->packShort($consistency);
         if (count($values)) {
             $values_data = '';
             $namedParameters = false;
@@ -322,93 +406,7 @@ class Cassandra
             $frame .= $this->packByte(0x00);
         }
 
-        // Writes a QUERY frame and return the result
         return $this->requestResult(self::OPCODE_QUERY, $frame);
-    }
-
-    /**
-     * Returns a binded parameter to be used with the query method
-     *
-     * @param mixed $value Value to bind        The query to run.
-     * @param int   $columnType  Value type out of one of the Cassandra::COLUMNTYPE_* constants
-     *
-     * @return array value to be used as part of the $values parameter of the query method
-     *
-     * @access public
-     * @static
-     */
-    public static function bindParam(mixed $value, int $columnType): array
-    {
-        return [$value, $columnType];
-    }
-
-    /**
-     * Prepares a query statement.
-     *
-     * @param string $cql The query to prepare.
-     *
-     * @return PreparedStatement|false The statement's information to be used with the execute
-     *               method. NULL on error.
-     *
-     * @throws \Exception
-     *
-     * @access public
-     */
-    public function prepare(string $cql): PreparedStatement|false
-    {
-        // Prepares the frame's body
-        $frame = $this->packLongString($cql);
-
-        // Writes a PREPARE frame and return the result
-        $retval = $this->requestResult(self::OPCODE_PREPARE, $frame);
-
-        if (!$retval) {
-            return false;
-        }
-
-        return new PreparedStatement($retval['id'], $retval['columns']);
-    }
-
-    /**
-     * Executes a prepared statement.
-     *
-     * @param array $stmt        The prepared statement as returned from the
-     *                           prepare method.
-     * @param int   $consistency Consistency level for the operation.
-     *
-     * @return array Result of the execution. Might be an array of rows (for
-     *               SELECT), or the operation's result (for USE, CREATE,
-     *               ALTER, UPDATE).
-     *               NULL on error.
-     *
-     * @throws \Exception
-     *
-     * @access public
-     */
-    public function execute(PreparedStatement $stmt, int $consistency = self::CONSISTENCY_ALL): array
-    {
-        // Prepares the frame's body - <id><count><values map>
-        $frame = base64_decode($stmt->getId());
-        $frame = $this->packString($frame) .
-            $this->packShort($consistency) .
-            $this->packByte(0x01) . // values only
-            $this->packShort(count($values));
-
-        foreach ($stmt->getColumns() as $key => $column) {
-            $value = $stmt->getBindValue($key);
-
-            $data = $this->packValue(
-                $value,
-                $column['type'],
-                $column['subtype1'],
-                $column['subtype2']
-            );
-
-            $frame .= $this->packLongString($data);
-        }
-
-        // Writes a EXECUTE frame and return the result
-        return $this->requestResult(self::OPCODE_EXECUTE, $frame);
     }
 
     /**
@@ -758,43 +756,22 @@ class Cassandra
      */
     public function packValue(mixed $value, int $type, int $subtype1 = 0, int $subtype2 = 0): string
     {
-        switch ($type) {
-            case self::COLUMNTYPE_CUSTOM: // Fallthrough
-            case self::COLUMNTYPE_BLOB:
-                return $this->packBlob($value);
-            case self::COLUMNTYPE_ASCII: // Fallthrough
-            case self::COLUMNTYPE_TEXT: // Fallthrough
-            case self::COLUMNTYPE_VARCHAR:
-                return $value;
-            case self::COLUMNTYPE_BIGINT: // Fallthrough
-            case self::COLUMNTYPE_COUNTER: // Fallthrough
-            case self::COLUMNTYPE_TIMESTAMP:
-                return $this->packBigint($value);
-            case self::COLUMNTYPE_BOOLEAN:
-                return $this->packBoolean($value);
-            case self::COLUMNTYPE_DECIMAL:
-                return $this->packDecimal($value);
-            case self::COLUMNTYPE_DOUBLE:
-                return $this->packDouble($value);
-            case self::COLUMNTYPE_FLOAT:
-                return $this->packFloat($value);
-            case self::COLUMNTYPE_INT:
-                return $this->packInt($value);
-            case self::COLUMNTYPE_UUID: // Fallthrough
-            case self::COLUMNTYPE_TIMEUUID:
-                return $this->packUuid($value);
-            case self::COLUMNTYPE_VARINT:
-                return $this->packVarInt($value);
-            case self::COLUMNTYPE_INET:
-                return $this->packInet($value);
-            case self::COLUMNTYPE_LIST: // Fallthrough
-            case self::COLUMNTYPE_SET:
-                return $this->packList($value, $subtype1);
-            case self::COLUMNTYPE_MAP:
-                return $this->packMap($value, $subtype1, $subtype2);
-        }
-
-        throw new \Exception('Unknown column type ' . $type);
+        return match ($type) {
+            self::COLUMNTYPE_CUSTOM, self::COLUMNTYPE_BLOB => $this->packBlob($value),
+            self::COLUMNTYPE_ASCII, self::COLUMNTYPE_TEXT, self::COLUMNTYPE_VARCHAR => $value,
+            self::COLUMNTYPE_BIGINT, self::COLUMNTYPE_COUNTER, self::COLUMNTYPE_TIMESTAMP => $this->packBigint($value),
+            self::COLUMNTYPE_BOOLEAN => $this->packBoolean($value),
+            self::COLUMNTYPE_DECIMAL => $this->packDecimal($value),
+            self::COLUMNTYPE_DOUBLE => $this->packDouble($value),
+            self::COLUMNTYPE_FLOAT => $this->packFloat($value),
+            self::COLUMNTYPE_INT => $this->packInt($value),
+            self::COLUMNTYPE_UUID, self::COLUMNTYPE_TIMEUUID => $this->packUuid($value),
+            self::COLUMNTYPE_VARINT => $this->packVarInt($value),
+            self::COLUMNTYPE_INET => $this->packInet($value),
+            self::COLUMNTYPE_LIST, self::COLUMNTYPE_SET => $this->packList($value, $subtype1),
+            self::COLUMNTYPE_MAP => $this->packMap($value, $subtype1, $subtype2),
+            default => throw new \Exception('Unknown column type ' . $type)
+        };
     }
 
     /**
@@ -818,43 +795,22 @@ class Cassandra
             return NULL;
         }
 
-        switch ($type) {
-            case self::COLUMNTYPE_CUSTOM: // Fallthrough
-            case self::COLUMNTYPE_BLOB:
-                return $this->unpackBlob($content);
-            case self::COLUMNTYPE_ASCII: // Fallthrough
-            case self::COLUMNTYPE_TEXT: // Fallthrough
-            case self::COLUMNTYPE_VARCHAR:
-                return $content;
-            case self::COLUMNTYPE_BIGINT: // Fallthrough
-            case self::COLUMNTYPE_COUNTER: // Fallthrough
-            case self::COLUMNTYPE_TIMESTAMP:
-                return $this->unpackBigint($content);
-            case self::COLUMNTYPE_BOOLEAN:
-                return $this->unpackBoolean($content);
-            case self::COLUMNTYPE_DECIMAL:
-                return $this->unpackDecimal($content);
-            case self::COLUMNTYPE_DOUBLE:
-                return $this->unpackDouble($content);
-            case self::COLUMNTYPE_FLOAT:
-                return $this->unpackFloat($content);
-            case self::COLUMNTYPE_INT:
-                return $this->unpackInt($content);
-            case self::COLUMNTYPE_UUID: // Fallthrough
-            case self::COLUMNTYPE_TIMEUUID:
-                return $this->unpackUuid($content);
-            case self::COLUMNTYPE_VARINT:
-                return $this->unpackVarInt($content);
-            case self::COLUMNTYPE_INET:
-                return $this->unpackInet($content);
-            case self::COLUMNTYPE_LIST: // Fallthrough
-            case self::COLUMNTYPE_SET:
-                return $this->unpackList($content, $subtype1);
-            case self::COLUMNTYPE_MAP:
-                return $this->unpackMap($content, $subtype1, $subtype2);
-        }
-
-        throw new \Exception('Unknown column type ' . $type);
+        return match ($type) {
+            self::COLUMNTYPE_CUSTOM, self::COLUMNTYPE_BLOB => $this->unpackBlob($content),
+            self::COLUMNTYPE_ASCII, self::COLUMNTYPE_TEXT, self::COLUMNTYPE_VARCHAR => $content,
+            self::COLUMNTYPE_BIGINT, self::COLUMNTYPE_COUNTER, self::COLUMNTYPE_TIMESTAMP => $this->unpackBigint($content),
+            self::COLUMNTYPE_BOOLEAN => $this->unpackBoolean($content),
+            self::COLUMNTYPE_DECIMAL => $this->unpackDecimal($content),
+            self::COLUMNTYPE_DOUBLE => $this->unpackDouble($content),
+            self::COLUMNTYPE_FLOAT => $this->unpackFloat($content),
+            self::COLUMNTYPE_INT => $this->unpackInt($content),
+            self::COLUMNTYPE_UUID, self::COLUMNTYPE_TIMEUUID => $this->unpackUuid($content),
+            self::COLUMNTYPE_VARINT => $this->unpackVarInt($content),
+            self::COLUMNTYPE_INET => $this->unpackInet($content),
+            self::COLUMNTYPE_LIST, self::COLUMNTYPE_SET => $this->unpackList($content, $subtype1),
+            self::COLUMNTYPE_MAP => $this->unpackMap($content, $subtype1, $subtype2),
+            default => throw new \Exception('Unknown column type ' . $type)
+        };
     }
 
     /**

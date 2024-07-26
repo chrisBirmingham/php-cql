@@ -2,26 +2,16 @@
 
 namespace CassandraNative\Statement;
 
-class PreparedStatement
+class PreparedStatement implements StatementInterface
 {
-	/**
-	 * @var string
-	 */
-	private $id;
+	protected string $id;
 
-	/**
-	 * @var array
-	 */
-	private $columns;
+	protected array $columns;
 
-	/**
-	 * @var array
-	 */
-	private $bindValues = [];
-
-	/**
-	 * @param array $statement
-	 */
+    /**
+     * @param string $id
+     * @param array $columns
+     */
 	public function __construct(string $id, array $columns)
 	{
 		$this->id = $id;
@@ -41,29 +31,17 @@ class PreparedStatement
 	 */
 	public function getColumns(): array
 	{
-		return $this->columns
+		return $this->columns;
 	}
 
-	/**
-	 * @param string $param
-	 * @return mixed
-	 * @throws \Exception
-	 */
-	public function getBindValue(string $param): mixed
-	{
-		if (!isset($this->bindValues[$param]) {
-			throw new \Exception('No value provided for bound parameter ' . $param)
-		}
-
-		return $this->bindValues[$param];
-	}
-
-	/**
-	 * @param string $param
-	 * @param mixed $value
-	 */
-	public function bindValue(string $param, mixed $value): void
-	{
-		$this->bindValues[$param] = $value; 
-	}
+    /**
+     * {@inheritDoc}
+     */
+    public function getStatement(): array
+    {
+        return [
+            'id' => $this->id,
+            'columns' => $this->columns
+        ];
+    }
 }
