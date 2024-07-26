@@ -191,11 +191,6 @@ class Cassandra
         string $dbname = '',
         int $port = 9042
     ): void {
-        // Lookups host name to IP, if needed
-        if ($this->socket) {
-            $this->close();
-        }
-
         // Connects to server
         if ($this->persistent) {
             $connection = @pfsockopen($host, $port, $errno, $errstr, $this->timeout);
@@ -217,10 +212,7 @@ class Cassandra
 
             // Reads incoming frame - should be immediate do we don't
             // wait for longer than connection timeout, in case Cassandra is non responsive
-            if (($frame = $this->readFrame()) === false) {
-                $this->close(true);
-                return;
-            }
+            $frame = $this->readFrame();
 
             stream_set_timeout($this->socket, $this->timeout);
 
@@ -236,10 +228,7 @@ class Cassandra
                 $this->writeFrame(self::OPCODE_CREDENTIALS, $body);
 
                 // Reads incoming frame
-                if (($frame = $this->readFrame()) === false) {
-                    $this->close(true);
-                    return;
-                }
+                $frame = $this->readFrame();
             }
 
             // Checks if a READY frame was received
@@ -304,22 +293,20 @@ class Cassandra
      *
      * @param string $cql The query to prepare.
      *
-     * @return PreparedStatement|false The statement's information to be used with the execute
+     * @return PreparedStatement The statement's information to be used with the execute
      *               method. NULL on error.
      *
      * @throws \Exception
      *
      * @access public
      */
-    public function prepare(string $cql): PreparedStatement|false
+    public function prepare(string $cql): PreparedStatement
     {
         // Prepares the frame's body
         $frame = $this->packLongString($cql);
 
         // Writes a PREPARE frame and return the result
-        if (($retval = $this->requestResult(self::OPCODE_PREPARE, $frame)) === null) {
-            return false;
-        }
+        $retval = $this->requestResult(self::OPCODE_PREPARE, $frame);
 
         return new PreparedStatement($retval['id'], $retval['columns']);
     }
@@ -415,7 +402,7 @@ class Cassandra
      * @param int    $opcode Frame's opcode.
      * @param string $body   Frame's body.
      *
-     * @return ?array Result of the request. Might be an array of rows (for
+     * @return array Result of the request. Might be an array of rows (for
      *               SELECT), or the operation's result (for USE, CREATE,
      *               ALTER, UPDATE).
      *               NULL on error.
@@ -424,16 +411,13 @@ class Cassandra
      *
      * @access private
      */
-    private function requestResult(int $opcode, string $body): ?array
+    private function requestResult(int $opcode, string $body): array
     {
         // Writes the frame
         $this->writeFrame($opcode, $body);
 
         // Reads incoming frame
         $frame = $this->readFrame();
-        if (!$frame) {
-            return NULL;
-        }
 
         // Parses the incoming frame
         if ($frame['opcode'] == self::OPCODE_RESULT) {
@@ -473,18 +457,14 @@ class Cassandra
      *
      * @param int $size Requested data size.
      *
-     * @return string|false Incoming data, false on error.
+     * @return string Incoming data, false on error.
      *
      * @throws \Exception
      *
      * @access private
      */
-    private function readSize(int $size): string|false
+    private function readSize(int $size): string
     {
-        if (!$this->socket) {
-            return false;
-        }
-
         $data = '';
         while (strlen($data) < $size) {
             $readSize = $size - strlen($data);
@@ -541,28 +521,23 @@ class Cassandra
     /**
      * Reads pending frame from the socket.
      *
-     * @return array|false Incoming data, false on error.
+     * @return array Incoming data, false on error.
      *
      * @throws \Exception
      *
      * @access private
      */
-    private function readFrame(): array|false
+    private function readFrame(): array
     {
         // Read the 9 bytes header
-        if (!($header = $this->readSize(9))) {
-            throw new \Exception('Missing header (' . strlen($header) . ')');
-        }
-
+        $header = $this->readSize(9);
         $length = $this->intFromBin($header, 5, 4, 0);
 
         // Read frame body, if exists
+        $body = '';
+        
         if ($length) {
-            if (!($body = $this->readSize($length))) {
-                return false;
-            }
-        } else {
-            $body = '';
+            $body = $this->readSize($length);
         }
 
         return $this->parseIncomingFrame($header, $body);
