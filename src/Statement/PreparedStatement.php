@@ -4,35 +4,35 @@ namespace CassandraNative\Statement;
 
 class PreparedStatement implements StatementInterface
 {
-	protected string $id;
+    protected string $id;
 
-	protected array $columns;
+    protected array $columns;
 
     /**
      * @param string $id
      * @param array $columns
      */
-	public function __construct(string $id, array $columns)
-	{
-		$this->id = $id;
-		$this->columns = $columns;
-	}
+    public function __construct(string $id, array $columns)
+    {
+        $this->id = $id;
+        $this->columns = $columns;
+    }
 
-	/**
-	 * @return string
-	 */
-	public function getId(): string 
-	{
-		return $this->id;
-	}
+    /**
+     * @return string
+     */
+    public function getId(): string 
+    {
+        return $this->id;
+    }
 
-	/**
-	 * @return array
-	 */
-	public function getColumns(): array
-	{
-		return $this->columns;
-	}
+    /**
+     * @return array
+     */
+    public function getColumns(): array
+    {
+        return $this->columns;
+    }
 
     /**
      * {@inheritDoc}
