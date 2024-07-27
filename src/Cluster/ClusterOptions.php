@@ -14,11 +14,11 @@ class ClusterOptions
 
     protected ?string $password;
 
-    protected float connectTimeout;
+    protected float $connectTimeout;
 
-    protected float requestTimeout;
+    protected float $requestTimeout;
 
-    protected ?SSLOptions ssl; 
+    protected ?SSLOptions $ssl; 
 
     protected int $port;
 
@@ -29,9 +29,9 @@ class ClusterOptions
         string $host,
         ?string $username,
         ?string $password,
-        float connectTimeout,
-        float requestTimeout,
-        ?SSLOptions ssl, 
+        float $connectTimeout,
+        float $requestTimeout,
+        ?SSLOptions $ssl, 
         int $port,
         bool $persistent 
     ) {

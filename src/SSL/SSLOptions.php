@@ -1,31 +1,31 @@
 <?php
 
-namespace CassandraNative\SLL;
+namespace CassandraNative\SSL;
 
 class SSLOptions
 {
-    protected string trustedCerts = '';
+    protected string|false $trustedCerts;
 
-    protected bool verify = false;
+    protected bool $verify;
 
-    protected string clientCert = '';
+    protected string|false $clientCert;
 
-    protected string privateKey = '';
+    protected string|false $privateKey;
 
-    protected string|false passphrase = '';
+    protected string|false $passphrase;
 
     /**
-     * @param string $trustedCerts,
+     * @param string|false $trustedCerts,
      * @param bool $verify,
-     * @param string $clientCert,
-     * @param string $privateKey,
+     * @param string|false $clientCert,
+     * @param string|false $privateKey,
      * @param string|false $passphrase
      */
     public function __construct(
-        string $trustedCerts,
+        string|false $trustedCerts,
         bool $verify,
-        string $clientCert,
-        string $privateKey,
+        string|false $clientCert,
+        string|false $privateKey,
         string|false $passphrase
     ) {
         $this->trustedCerts = $trustedCerts;
@@ -35,43 +35,27 @@ class SSLOptions
         $this->passphrase = $passphrase;
     }
 
-    /**
-     * @return string
-     */
-    public function getTrustedCerts(): string
+    public function get(): array
     {
-        return $this->trustedCerts;
-    }
+        $options = [
+            'verify_peer' => $this->verify
+        ];
 
-    /**
-     * @return bool
-     */
-    public function getVerify(): bool
-    {
-        return $this->verify;
-    }
+        if ($this->trustedCerts) {
+            $options['capath'] = $this->trustedCerts;
+        }
 
-    /**
-     * @return string
-     */
-    public function getClientCerts(): string
-    {
-        return $this->clientCert;
-    }
+        if ($this->clientCert) {
+            $options['cafile'] = $this->clientCert;
+        }
 
-    /**
-     * @return string
-     */
-    public function getPrivateKey(): string
-    {
-        return $this->privateKey;
-    }
+        if ($this->privateKey) {
+            $options['local_cert'] = $this->privateKey;
+            if ($this->passphrase) {
+                $options['passphrase'] = $this->passphrase; 
+            }
+        }
 
-    /**
-     * @return string|false
-     */
-    public function getPassphrase(): string|false
-    {
-        return $this->passphrase;
+        return $options;
     }
 }

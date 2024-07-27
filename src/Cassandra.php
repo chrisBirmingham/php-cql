@@ -8,6 +8,7 @@ namespace CassandraNative;
 
 use CassandraNative\Cluster\ClusterOptions;
 use CassandraNative\Result\Rows;
+use CassandraNative\SSL\SSLOptions;
 use CassandraNative\Statement\PreparedStatement;
 use CassandraNative\Statement\SimpleStatement;
 use CassandraNative\Statement\StatementInterface;
@@ -144,7 +145,7 @@ class Cassandra
     public function __construct(ClusterOptions $options)
     {
         $this->options = $options;
-        $this->connect();
+        $this->establishConnection();
     }
 
     /* Makes sure to close() upon destruct */
@@ -155,21 +156,26 @@ class Cassandra
 
     // Tries a connection to a Cassandra server
 
-    private function build_connection_string(string $host, int port): string
-    {
-        return 'tcp://' . $host . ':' . $port;
+    private function build_connection_string(
+      string $host,
+      int $port,
+      ?SSLOptions $ssl
+    ): string {
+        $protocol = ($ssl instanceof SSLOptions)? 'ssl' : 'tcp';
+        return $protocol . '://' . $host . ':' . $port;
     }
 
     /**
      *
      * @throws \Exception
      */
-    private function connect(): void
+    private function establishConnection(): void
     {
         $host = $this->options->getHost();
         $port = $this->options->getPort();
         $connectTimeout = $this->options->getConnectTimeout();
         $persistent = $this->options->getPersistentSessions();
+        $ssl = $this->options->getSSL();
         
         $connectionFlags = STREAM_CLIENT_CONNECT;
 
@@ -177,12 +183,20 @@ class Cassandra
             $connectionFlags |= STREAM_CLIENT_PERSISTENT;
         }
 
+        $context = null;
+        if ($ssl instanceof SSLOptions) {
+            $context = stream_context_create([
+                'ssl' => $ssl->get()
+            ]);
+        }
+
         $connection = stream_socket_client(
-            $this->build_connection_string($host, $port),
+            $this->build_connection_string($host, $port, $ssl),
             $errno,
             $errstr,
             $connectTimeout,
-            $connectionFlags
+            $connectionFlags,
+            $context
         );
 
         if ($connection === false) {
@@ -209,9 +223,9 @@ class Cassandra
                 $body =
                     $this->packShort(2) .
                     $this->packString('username') .
-                    $this->packString($user) .
+                    $this->packString($this->options->getUsername()) .
                     $this->packString('password') .
-                    $this->packString($passwd);
+                    $this->packString($this->options->getPassword());
                 $this->writeFrame(self::OPCODE_CREDENTIALS, $body);
 
                 // Reads incoming frame
@@ -224,12 +238,15 @@ class Cassandra
                 throw new \Exception('Missing READY packet. Got ' . $frame['opcode'] . ') instead');
             }
         }
+    }
 
-        // Checks if we need to set initial keyspace
-        if ($dbname) {
-            // Sends a USE query.
-            $res = $this->execute(new SimpleStatement('USE ' . $dbname));
-        }
+    /**
+     * @param string $keyspace
+     */
+    public function connect(string $keyspace): void
+    {
+        $stmt = new SimpleStatement('USE ' . $keyspace);
+        $this->execute($stmt);
     }
 
     /**

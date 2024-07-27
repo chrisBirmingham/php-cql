@@ -2,9 +2,10 @@
 
 namespace CassandraNative\Cluster;
 
+use CassandraNative\Cassandra;
 use CassandraNative\SSL\SSLOptions;
 
-class CassandraBuilder
+class ClusterBuilder
 {
     protected int $consistency = Cassandra::CONSISTENCY_ONE;
 
@@ -14,11 +15,11 @@ class CassandraBuilder
 
     protected ?string $password = null;
 
-    protected float connectTimeout = 30;
+    protected float $connectTimeout = 30;
 
-    protected float requestTimeout = 30;
+    protected float $requestTimeout = 30;
 
-    protected ?SSLOptions ssl = null; 
+    protected ?SSLOptions $ssl = null; 
 
     protected int $port = 9042;
 
@@ -31,7 +32,7 @@ class CassandraBuilder
     public function withDefaultConsistency(int $consistency): static
     {
         if ($consistency < Cassandra::CONSISTENCY_ANY || $consistency > CONSISTENCY_LOCAL_ONE) {
-            throw new \InvalidArgumentException()
+            throw new \InvalidArgumentException();
         }
 
         $this->consistency = $consistency;
@@ -111,11 +112,11 @@ class CassandraBuilder
     }
 
     /**
-     * @return ClusterOptions
+     * @return Cassandra
      */
-    public function build(): ClusterOptions
+    public function build(): Cassandra
     {
-        return new ClusterOptions(
+        $options = new ClusterOptions(
             $this->consistency,
             $this->host,
             $this->username,
@@ -123,7 +124,10 @@ class CassandraBuilder
             $this->connectTimeout,
             $this->requestTimeout,
             $this->ssl,
+            $this->port,
             $this->persistent
         );
+
+        return new Cassandra($options);
     }
 }

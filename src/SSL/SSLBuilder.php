@@ -1,18 +1,18 @@
 <?php
 
-namespace CassandraNative\SLL;
+namespace CassandraNative\SSL;
 
 class SSLBuilder 
 {
-    protected string trustedCerts = '';
+    protected string|false $trustedCerts = '';
 
-    protected bool verify = false;
+    protected bool $verify = false;
 
-    protected string clientCert = '';
+    protected string|false $clientCert = '';
 
-    protected string privateKey = '';
+    protected string|false $privateKey = '';
 
-    protected string|false passphrase = '';
+    protected string|false $passphrase = '';
 
     /**
      * @param string $path
@@ -65,6 +65,7 @@ class SSLBuilder
             $this->trustedCerts,
             $this->verify,
             $this->clientCert,
+            $this->privateKey,
             $this->passphrase
         );
     }
