@@ -155,23 +155,35 @@ class Cassandra
 
     // Tries a connection to a Cassandra server
 
+    private function build_connection_string(string $host, int port): string
+    {
+        return 'tcp://' . $host . ':' . $port;
+    }
+
     /**
      *
      * @throws \Exception
      */
     private function connect(): void
     {
-        // Connects to server
         $host = $this->options->getHost();
         $port = $this->options->getPort();
         $connectTimeout = $this->options->getConnectTimeout();
         $persistent = $this->options->getPersistentSessions();
+        
+        $connectionFlags = STREAM_CLIENT_CONNECT;
 
         if ($persistent) {
-            $connection = @pfsockopen($host, $port, $errno, $errstr, $connectTimeout);
-        } else {
-            $connection = @fsockopen($host, $port, $errno, $errstr, $connectTimeout);
+            $connectionFlags |= STREAM_CLIENT_PERSISTENT;
         }
+
+        $connection = stream_socket_client(
+            $this->build_connection_string($host, $port),
+            $errno,
+            $errstr,
+            $connectTimeout,
+            $connectionFlags
+        );
 
         if ($connection === false) {
             throw new \Exception('Socket connect to ' . $host . ':' . $port . ' failed: ' . '(' . $errno . ') ' . $errstr);
