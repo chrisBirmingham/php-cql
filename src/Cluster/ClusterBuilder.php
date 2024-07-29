@@ -31,7 +31,7 @@ class ClusterBuilder
      */
     public function withDefaultConsistency(int $consistency): static
     {
-        if ($consistency < Cassandra::CONSISTENCY_ANY || $consistency > CONSISTENCY_LOCAL_ONE) {
+        if ($consistency < Cassandra::CONSISTENCY_ANY || $consistency > Cassandra::CONSISTENCY_LOCAL_ONE) {
             throw new \InvalidArgumentException();
         }
 
@@ -64,7 +64,7 @@ class ClusterBuilder
      * @param string $password
      * @return $this
      */
-    public function withCredentials(string $username, string $password): static
+    public function withCredentials(string $username, #[\SensitiveParameter] string $password): static
     {
         $this->username = $username;
         $this->password = $password;
@@ -113,6 +113,7 @@ class ClusterBuilder
 
     /**
      * @return Cassandra
+     * @throws \Exception
      */
     public function build(): Cassandra
     {

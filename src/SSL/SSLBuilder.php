@@ -4,15 +4,15 @@ namespace CassandraNative\SSL;
 
 class SSLBuilder 
 {
-    protected string|false $trustedCerts = '';
+    protected ?string $trustedCerts = '';
 
     protected bool $verify = false;
 
-    protected string|false $clientCert = '';
+    protected ?string $clientCert = '';
 
-    protected string|false $privateKey = '';
+    protected ?string $privateKey = '';
 
-    protected string|false $passphrase = '';
+    protected ?string $passphrase = '';
 
     /**
      * @param string $path
@@ -46,10 +46,10 @@ class SSLBuilder
 
     /**
      * @param string $path
-     * @param string $passphrase
+     * @param ?string $passphrase
      * @return $this
      */
-    public function withPrivateKey(string $path, string|false $passphrase = false): static
+    public function withPrivateKey(string $path, #[\SensitiveParameter] ?string $passphrase = null): static
     {
         $this->privateKey = $path;
         $this->passphrase = $passphrase;

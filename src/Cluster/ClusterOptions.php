@@ -28,7 +28,7 @@ class ClusterOptions
         int $consistency,
         string $host,
         ?string $username,
-        ?string $password,
+        #[\SensitiveParameter] ?string $password,
         float $connectTimeout,
         float $requestTimeout,
         ?SSLOptions $ssl, 
@@ -46,46 +46,73 @@ class ClusterOptions
         $this->persistent = $persistent;
     }
 
+    /**
+     * @return int
+     */
     public function getDefaultConsistency(): int
     {
         return $this->consistency;
     }
 
+    /**
+     * @return string
+     */
     public function getHost(): string
     {
         return $this->host;
     }
 
+    /**
+     * @return ?string
+     */
     public function getUsername(): ?string
     {
         return $this->username;
     }
 
+    /**
+     * @return ?string
+     */
     public function getPassword(): ?string
     {
         return $this->password;
     }
 
+    /**
+     * @return float
+     */
     public function getConnectTimeout(): float
     {
         return $this->connectTimeout;
     }
 
+    /**
+     * @return float
+     */
     public function getRequestTimeout(): float
     {
         return $this->requestTimeout;
     }
 
+    /**
+     * @return ?SSLOptions
+     */
     public function getSSL(): ?SSLOptions
     {
         return $this->ssl;
     }
 
+    /**
+     * @return int
+     */
     public function getPort(): int
     {
         return $this->port;
     }
 
+    /**
+     * @return bool
+     */
     public function getPersistentSessions(): bool
     {
         return $this->persistent;
