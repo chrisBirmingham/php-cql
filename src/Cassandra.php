@@ -8,11 +8,14 @@ namespace CassandraNative;
 
 use CassandraNative\Cluster\ClusterOptions;
 use CassandraNative\Connection\Socket;
-use CassandraNative\Exception\CassandraError;
+use CassandraNative\Exception\AuthenticationException;
+use CassandraNative\Exception\CassandraException;
 use CassandraNative\Exception\ConnectionException;
 use CassandraNative\Exception\ProtocolException;
 use CassandraNative\Exception\QueryException;
+use CassandraNative\Exception\ServerException;
 use CassandraNative\Exception\TimeoutException;
+use CassandraNative\Exception\UnauthorizedException;
 use CassandraNative\Result\Rows;
 use CassandraNative\SSL\SSLOptions;
 use CassandraNative\Statement\PreparedStatement;
@@ -139,8 +142,7 @@ class Cassandra
 
     /**
      * @param ClusterOptions $options
-     * @throws ConnectionException
-     * @throws ProtocolException
+     * @throws CassandraException
      */
     public function __construct(ClusterOptions $options)
     {
@@ -151,8 +153,7 @@ class Cassandra
 
     /**
      * @param ClusterOptions $clusterOptions
-     * @throws ConnectionException
-     * @throws ProtocolException
+     * @throws CassandraException
      */
     private function establishConnection(ClusterOptions $clusterOptions): void
     {
@@ -163,46 +164,39 @@ class Cassandra
             return;
         }
 
-        try {
-            // Writes a STARTUP frame
-            $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
-            $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
+        // Writes a STARTUP frame
+        $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
+        $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
 
-            // Reads incoming frame - should be immediate do we don't
+        // Reads incoming frame - should be immediate do we don't
+        $frame = $this->readFrame();
+        $opcode = $frame['opcode'];
+
+        // Checks if an AUTHENTICATE frame was received
+        if ($opcode == self::OPCODE_AUTHENTICATE) {
+            // Writes a CREDENTIALS frame
+            $body =
+                $this->packShort(2) .
+                $this->packString('username') .
+                $this->packString($clusterOptions->getUsername()) .
+                $this->packString('password') .
+                $this->packString($clusterOptions->getPassword());
+            $this->writeFrame(self::OPCODE_CREDENTIALS, $body);
+
+            // Reads incoming frame
             $frame = $this->readFrame();
             $opcode = $frame['opcode'];
+        }
 
-            // Checks if an AUTHENTICATE frame was received
-            if ($opcode == self::OPCODE_AUTHENTICATE) {
-                // Writes a CREDENTIALS frame
-                $body =
-                    $this->packShort(2) .
-                    $this->packString('username') .
-                    $this->packString($clusterOptions->getUsername()) .
-                    $this->packString('password') .
-                    $this->packString($clusterOptions->getPassword());
-                $this->writeFrame(self::OPCODE_CREDENTIALS, $body);
-
-                // Reads incoming frame
-                $frame = $this->readFrame();
-                $opcode = $frame['opcode'];
-            }
-
-            // Checks if a READY frame was received
-            if ($opcode != self::OPCODE_READY) {
-                throw new ProtocolException('Missing READY packet. Got ' . $opcode . ' instead', $opcode);
-            }
-        } catch (CassandraError $e) {
-            throw new ConnectionException(
-                'Received error response from Cassandra while sending STARTUP Frame',
-                previous: $e
-            );
+        // Checks if a READY frame was received
+        if ($opcode != self::OPCODE_READY) {
+            throw new ProtocolException('Missing READY packet. Got ' . $opcode . ' instead', $opcode);
         }
     }
 
     /**
      * @param string $keyspace
-     * @throws \Exception
+     * @throws CassandraException
      */
     public function connect(string $keyspace): void
     {
@@ -230,9 +224,7 @@ class Cassandra
      *               SELECT), or the operation's result (for USE, CREATE,
      *               ALTER, UPDATE).
      *               NULL on error.
-     * @throws QueryException
-     * @throws ProtocolException
-     * @throws ConnectionException
+     * @throws CassandraException
      */
     public function execute(
         StatementInterface $stmt,
@@ -241,19 +233,12 @@ class Cassandra
     ): Rows {
         $consistency ??= $this->defaultConsistency;
 
-        try {
-            $rows = match (true) {
-                $stmt instanceof PreparedStatement => $this->executePreparedStatement($stmt, $values, $consistency),
-                $stmt instanceof SimpleStatement => $this->executeSimpleStatement($stmt, $values, $consistency)
-            };
+        $rows = match (true) {
+            $stmt instanceof PreparedStatement => $this->executePreparedStatement($stmt, $values, $consistency),
+            $stmt instanceof SimpleStatement => $this->executeSimpleStatement($stmt, $values, $consistency)
+        };
 
-            return new Rows($rows);
-        } catch (CassandraError $e) {
-            throw new QueryException(
-                'Received query error response from Cassandra. Message: ' . $e->getMessage() . '. Code: ' . $e->getCode(),
-                previous: $e
-            );
-        }
+        return new Rows($rows);
     }
 
     /**
@@ -264,26 +249,17 @@ class Cassandra
      * @return PreparedStatement The statement's information to be used with the execute
      *               method. NULL on error.
      *
-     * @throws QueryException
-     * @throws ProtocolException
-     * @throws ConnectionException
+     * @throws CassandraException
      */
     public function prepare(string $cql): PreparedStatement
     {
-        try {
-            // Prepares the frame's body
-            $frame = $this->packLongString($cql);
+        // Prepares the frame's body
+        $frame = $this->packLongString($cql);
 
-            // Writes a PREPARE frame and return the result
-            $retval = $this->requestResult(self::OPCODE_PREPARE, $frame);
+        // Writes a PREPARE frame and return the result
+        $retval = $this->requestResult(self::OPCODE_PREPARE, $frame);
 
-            return new PreparedStatement($retval['id'], $retval['columns']);
-        } catch (CassandraError $e) {
-            throw new QueryException(
-                'Received query error response from Cassandra. Message: ' . $e->getMessage() . '. Code: ' . $e->getCode(),
-                previous: $e
-            );
-        }
+        return new PreparedStatement($retval['id'], $retval['columns']);
     }
 
     /**
@@ -298,9 +274,7 @@ class Cassandra
      *               ALTER, UPDATE).
      *               NULL on error.
      *
-     * @throws CassandraError
-     * @throws ProtocolException
-     * @throws ConnectionException
+     * @throws CassandraException
      */
     private function executePreparedStatement(
         PreparedStatement $stmt,
@@ -336,9 +310,7 @@ class Cassandra
      * @param array $values
      * @param int $consistency
      * @return array
-     * @throws CassandraError
-     * @throws ProtocolException
-     * @throws ConnectionException
+     * @throws CassandraException
      */
     private function executeSimpleStatement(
         SimpleStatement $stmt,
@@ -384,9 +356,7 @@ class Cassandra
      *               ALTER, UPDATE).
      *               NULL on error.
      *
-     * @throws ProtocolException
-     * @throws ConnectionException
-     * @throws CassandraError
+     * @throws CassandraException
      */
     private function requestResult(int $opcode, string $body): array
     {
@@ -413,7 +383,7 @@ class Cassandra
      * @param int    $response Frame's response flag.
      * @param int    $stream   Frame's stream id.
      *
-     * @throws ConnectionException
+     * @throws CassandraException
      */
     private function writeFrame(int $opcode, string $body, int $response = 0, int $stream = 0): void
     {
@@ -425,10 +395,29 @@ class Cassandra
     }
 
     /**
+     * @param int $errorCode
+     * @param string $errorMessage
+     * @throws CassandraException
+     */
+    private function convertCassandraErrorToException(int $errorCode, string $errorMessage): void
+    {
+        $exception = match ($errorCode) {
+            0x0000, 0x1001, 0x1002, 0x1003 => ServerException::class,
+            0x000A => ProtocolException::class,
+            0x0100 => AuthenticationException::class,
+            0x1100, 0x1200 => TimeoutException::class,
+            0x1300, 0x1400, 0x1500, 0x2000, 0x2200, 0x2300, 0x2400, 0x2500 => QueryException::class,
+            0x2100 => UnauthorizedException::class
+        };
+
+        throw new $exception($errorMessage, $errorCode);
+    }
+
+    /**
      * @param string $header
      * @param string $body
      * @return array
-     * @throws CassandraError
+     * @throws CassandraException
      */
     private function parseIncomingFrame(string $header, string $body): array
     {
@@ -456,12 +445,13 @@ class Cassandra
             $errCode = $this->intFromBin($body, 0, 4);
             $bodyOffset = 4;  // Must be passed by reference
             $errMsg = $this->popString($body, $bodyOffset);
-
-            $errCode = sprintf('%04X', $errCode);
-            throw new CassandraError('Error received from server: ' . $errMsg, $errCode);
+            $this->convertCassandraErrorToException($errCode, $errMsg);
         }
 
-        return ['opcode' => $opcode, 'body' => $body];
+        return [
+            'opcode' => $opcode,
+            'body' => $body
+        ];
     }
 
     /**
@@ -469,8 +459,7 @@ class Cassandra
      *
      * @return array Incoming data, false on error.
      *
-     * @throws ConnectionException
-     * @throws CassandraError
+     * @throws CassandraException
      */
     private function readFrame(): array
     {
@@ -497,7 +486,7 @@ class Cassandra
      *               or the operation's result (for USE, CREATE, ALTER,
      *               UPDATE).
      *               NULL on error.
-     * @throws ProtocolException
+     * @throws CassandraException
      */
     private function parseResult(string $body): array
     {
@@ -626,7 +615,7 @@ class Cassandra
      *
      * @return array Rows with associative array of the records.
      *
-     * @throws ProtocolException
+     * @throws CassandraException
      */
     private function parseRows(string $body, int $bodyOffset): array
     {
@@ -699,7 +688,7 @@ class Cassandra
      *
      * @return mixed Unpacked value.
      *
-     * @throws ProtocolException
+     * @throws CassandraException
      */
     private function unpackValue(?string $content, int $type, int $subtype1 = 0, int $subtype2 = 0): mixed
     {
