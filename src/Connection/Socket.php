@@ -17,6 +17,8 @@ class Socket
     protected $stream = false;
 
     /**
+     * Connect to a Cassandra host
+     *
      * @param ClusterOptions $clusterOptions
      * @throws ConnectionException
      */
@@ -66,6 +68,8 @@ class Socket
     }
 
     /**
+     * Checks if a socket is persistent and has already been read from
+     *
      * @return bool
      */
     public function isPersistent(): bool
@@ -78,14 +82,14 @@ class Socket
      *
      * @param int $size Requested data size.
      *
-     * @return string Incoming data, false on error.
+     * @return string Incoming data.
      *
      * @throws ConnectionException
      */
     public function read(int $size): string
     {
         $data = '';
-        while (strlen($data) < $size) {
+        do {
             $readSize = $size - strlen($data);
             $buff = @fread($this->stream, $readSize);
             if ($buff === false) {
@@ -96,16 +100,19 @@ class Socket
                 throw new ConnectionException('Failed to read packet from socket');
             }
             $data .= $buff;
-        }
+        } while (strlen($data) < $size);
+
         return $data;
     }
 
     /**
-     * @param string $body
+     * Writes data to the socket
+     *
+     * @param string $body The body to write
      * @throws ConnectionException
      * @throws TimeoutException
      */
-    public function writeFrame(string $body): void
+    public function write(string $body): void
     {
         if (fwrite($this->stream, $body) === false) {
             if (stream_get_meta_data($this->stream)['timed_out']) {

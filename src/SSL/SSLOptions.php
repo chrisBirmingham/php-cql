@@ -35,6 +35,11 @@ class SSLOptions
         $this->passphrase = $passphrase;
     }
 
+    /**
+     * Returns the SSL options in the format supported by stream_context_create
+     *
+     * @return array
+     */
     public function get(): array
     {
         $options = [
@@ -42,17 +47,18 @@ class SSLOptions
         ];
 
         if ($this->trustedCerts) {
-            $options['capath'] = $this->trustedCerts;
+            $options['cafile'] = $this->trustedCerts;
         }
 
         if ($this->clientCert) {
-            $options['cafile'] = $this->clientCert;
+            $options['local_cert'] = $this->clientCert;
         }
 
         if ($this->privateKey) {
-            $options['local_cert'] = $this->privateKey;
+            $options['local_pk'] = $this->privateKey;
+
             if ($this->passphrase) {
-                $options['passphrase'] = $this->passphrase; 
+                $options['passphrase'] = $this->passphrase;
             }
         }
 

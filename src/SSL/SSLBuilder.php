@@ -4,15 +4,15 @@ namespace CassandraNative\SSL;
 
 class SSLBuilder 
 {
-    protected ?string $trustedCerts = '';
+    protected ?string $trustedCerts = null;
 
-    protected bool $verify = false;
+    protected bool $verify = true;
 
-    protected ?string $clientCert = '';
+    protected ?string $clientCert = null;
 
-    protected ?string $privateKey = '';
+    protected ?string $privateKey = null;
 
-    protected ?string $passphrase = '';
+    protected ?string $passphrase = null;
 
     /**
      * @param string $path

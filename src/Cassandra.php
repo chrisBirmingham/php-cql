@@ -399,7 +399,7 @@ class Cassandra
         $frame = $this->packFrame($opcode, $body, $response, $stream);
 
         // Writes frame to socket
-        $this->socket->writeFrame($frame);
+        $this->socket->write($frame);
     }
 
     /**
