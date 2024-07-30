@@ -10,14 +10,12 @@ use CassandraNative\Cluster\ClusterOptions;
 use CassandraNative\Connection\Socket;
 use CassandraNative\Exception\AuthenticationException;
 use CassandraNative\Exception\CassandraException;
-use CassandraNative\Exception\ConnectionException;
 use CassandraNative\Exception\ProtocolException;
 use CassandraNative\Exception\QueryException;
 use CassandraNative\Exception\ServerException;
 use CassandraNative\Exception\TimeoutException;
 use CassandraNative\Exception\UnauthorizedException;
 use CassandraNative\Result\Rows;
-use CassandraNative\SSL\SSLOptions;
 use CassandraNative\Statement\PreparedStatement;
 use CassandraNative\Statement\SimpleStatement;
 use CassandraNative\Statement\StatementInterface;
@@ -1166,7 +1164,7 @@ class Cassandra
         $stringLength = $this->intFromBin($body, $offset, 4, 0);
 
         if ($stringLength == 0xFFFFFFFF) {
-            $retval = NULL;
+            return NULL;
         }
 
         $retval = substr($body, $offset + 4, $stringLength);
