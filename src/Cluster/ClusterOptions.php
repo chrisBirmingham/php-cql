@@ -8,7 +8,10 @@ class ClusterOptions
 {
     protected int $consistency;
 
-    protected string $host;
+    /**
+     * @var string[]
+     */
+    protected array $hosts;
 
     protected ?string $username;
 
@@ -24,9 +27,20 @@ class ClusterOptions
 
     protected bool $persistent;
 
+    /**
+     * @param int $consistency
+     * @param string[] $hosts
+     * @param ?string $username
+     * @param ?string $password
+     * @param float $connectTimeout
+     * @param float $requestTimeout
+     * @param ?SSLOptions $ssl
+     * @param int $port
+     * @param bool $persistent
+     */
     public function __construct(
         int $consistency,
-        string $host,
+        array $hosts,
         ?string $username,
         #[\SensitiveParameter] ?string $password,
         float $connectTimeout,
@@ -36,7 +50,7 @@ class ClusterOptions
         bool $persistent 
     ) {
         $this->consistency = $consistency;
-        $this->host = $host;
+        $this->hosts = $hosts;
         $this->username = $username;
         $this->password = $password;
         $this->connectTimeout = $connectTimeout;
@@ -55,11 +69,11 @@ class ClusterOptions
     }
 
     /**
-     * @return string
+     * @return string[]
      */
-    public function getHost(): string
+    public function getHosts(): array
     {
-        return $this->host;
+        return $this->hosts;
     }
 
     /**

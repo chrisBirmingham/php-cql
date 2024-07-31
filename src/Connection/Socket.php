@@ -25,7 +25,9 @@ class Socket
     public function connect(ClusterOptions $clusterOptions): void
     {
         $this->persistent = $clusterOptions->getPersistentSessions();
-        $host = $clusterOptions->getHost();
+        $hosts = $clusterOptions->getHosts();
+        $hostId = array_rand($hosts); // Connection Pooling what's that?
+        $host = $hosts[$hostId];
         $port = $clusterOptions->getPort();
         $connectTimeout = $clusterOptions->getConnectTimeout();
         $address = 'tcp://' . $host . ':' . $port;

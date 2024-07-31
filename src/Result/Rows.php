@@ -2,12 +2,12 @@
 
 namespace CassandraNative\Result;
 
-class Rows implements \ArrayAccess
+class Rows implements \ArrayAccess, \Iterator
 {
     protected array $results;
 
     /**
-     * @param array $results
+     * @param array[] $results
      */
     public function __construct(array $results)
     {
@@ -22,34 +22,40 @@ class Rows implements \ArrayAccess
         return count($this->results);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function rewind(): void
     {
         reset($this->results);
     }
 
     /**
-     * @return array
+     * {@inheritDoc}
      */
     public function current(): array
     {
-        return $this->current($this->results);
+        return current($this->results);
     }
 
     /**
-     * @return int
+     * {@inheritDoc}
      */
     public function key(): int
     {
         return key($this->results);
     }
 
+    /**
+     * {@inheritDoc}
+     */
     public function next(): void
     {
         next($this->results);
     }
 
     /**
-     * @return bool
+     * {@inheritDoc}
      */
     public function valid(): bool
     {

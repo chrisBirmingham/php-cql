@@ -9,7 +9,10 @@ class ClusterBuilder
 {
     protected int $consistency = Cassandra::CONSISTENCY_ONE;
 
-    protected string $host = 'localhost';
+    /**
+     * @var string[]
+     */
+    protected array $hosts = ['localhost'];
 
     protected ?string $username = null;
 
@@ -26,13 +29,17 @@ class ClusterBuilder
     protected bool $persistent = false;
 
     /**
+     * Sets the default consistency for all queries to the cluster. Default is CONSISTENCY_ONE
+     *
      * @param int $consistency
      * @return $this
+     *
+     * @throws \InvalidArgumentException
      */
     public function withDefaultConsistency(int $consistency): static
     {
         if ($consistency < Cassandra::CONSISTENCY_ANY || $consistency > Cassandra::CONSISTENCY_LOCAL_ONE) {
-            throw new \InvalidArgumentException();
+            throw new \InvalidArgumentException('Invalid consistency provided. Must be between CONSISTENCY_ANY and CONSISTENCY_LOCAL_ONE');
         }
 
         $this->consistency = $consistency;
@@ -40,16 +47,27 @@ class ClusterBuilder
     }
 
     /**
-     * @param string $host
+     * Sets a list of initial hosts to connect too. The client will pick one at random to attempt a connection
+     * Default is localhost
+     *
+     * @param string[] $hosts
      * @return $this
+     *
+     * @throws \InvalidArgumentException
      */
-    public function withContactPoint(string $host): static
+    public function withContactPoints(array $hosts): static
     {
-        $this->host = $host;
+        if (count($hosts) < 1) {
+            throw new \InvalidArgumentException('Contact hosts cannot be empty');
+        }
+
+        $this->hosts = $hosts;
         return $this;
     }
 
     /**
+     * Sets the port to connect too. Default is 9042
+     *
      * @param int $port
      * @return $this
      */
@@ -60,6 +78,9 @@ class ClusterBuilder
     }
 
     /**
+     * Sets the plaintext credentials for authenticating the connection to the cluster
+     * Default no authentication
+     *
      * @param string $username
      * @param string $password
      * @return $this
@@ -72,6 +93,8 @@ class ClusterBuilder
     }
 
     /**
+     * Sets timeout for connecting to the Cluster
+     *
      * @param float $timeout
      * @return $this
      */
@@ -82,6 +105,8 @@ class ClusterBuilder
     }
 
     /**
+     * Sets the timeout for requests to the cluster
+     *
      * @param float $timeout
      * @return $this
      */
@@ -92,17 +117,22 @@ class ClusterBuilder
     }
 
     /**
-     * @param ?SSLOptions $ssl
+     *  Sets SSL connection settings built via the SSLBuilder object
+     * Default is unencrypted
+     *
+     * @param SSLOptions $ssl
      * @return $this
      */
-    public function withSSL(?SSLOptions $ssl): static 
+    public function withSSL(SSLOptions $ssl): static
     {
         $this->ssl = $ssl;
         return $this;
     }
 
     /**
-     * @param bool $enabled
+     * Sets whether the connection to the cluster should be persistent or not
+     *
+     * @param bool $enabled Default is false
      * @return $this
      */
     public function withPersistentSessions(bool $enabled): static
@@ -112,6 +142,8 @@ class ClusterBuilder
     }
 
     /**
+     * Builds a cluster based on current settings
+     *
      * @return Cassandra
      * @throws \Exception
      */
@@ -119,7 +151,7 @@ class ClusterBuilder
     {
         $options = new ClusterOptions(
             $this->consistency,
-            $this->host,
+            $this->hosts,
             $this->username,
             $this->password,
             $this->connectTimeout,

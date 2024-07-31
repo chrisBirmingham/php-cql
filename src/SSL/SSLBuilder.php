@@ -15,6 +15,8 @@ class SSLBuilder
     protected ?string $passphrase = null;
 
     /**
+     * Adds a certificate used to verify the nodes identity
+     *
      * @param string $path
      * @return $this
      */
@@ -25,6 +27,8 @@ class SSLBuilder
     }
 
     /**
+     * Turns on or off certificate verification. Default is on
+     *
      * @param bool $verify
      * @return $this
      */
@@ -35,6 +39,8 @@ class SSLBuilder
     }
 
     /**
+     * Adds a certificate used to authenticate the client on the server side
+     *
      * @param string $path
      * @return $this
      */
@@ -45,6 +51,8 @@ class SSLBuilder
     }
 
     /**
+     * Adds a private key and optional passphrase used to authenticate the client on the server side.
+     *
      * @param string $path
      * @param ?string $passphrase
      * @return $this
@@ -57,6 +65,8 @@ class SSLBuilder
     }
 
     /**
+     * Builds the SSL options to be provided to a Cluster Builder instance
+     *
      * @return SSLOptions
      */
     public function build(): SSLOptions
