@@ -6,19 +6,34 @@
 
 namespace CassandraNative;
 
+use CassandraNative\Cluster\ClusterOptions;
+use CassandraNative\Connection\Socket;
+use CassandraNative\Exception\AuthenticationException;
+use CassandraNative\Exception\CassandraException;
+use CassandraNative\Exception\ProtocolException;
+use CassandraNative\Exception\QueryException;
+use CassandraNative\Exception\ServerException;
+use CassandraNative\Exception\TimeoutException;
+use CassandraNative\Exception\UnauthorizedException;
+use CassandraNative\Result\Rows;
+use CassandraNative\Statement\PreparedStatement;
+use CassandraNative\Statement\SimpleStatement;
+use CassandraNative\Statement\StatementInterface;
+
 /**
  * Cassanda Connector
  *
  * A native Cassandra connector for PHP based on the CQL binary protocol v3,
  * without the need for any external extensions.
  *
- * Requires PHP version >5, and Cassandra >1.2.
+ * Requires PHP version >8, and Cassandra >1.2.
  *
  * Usage and more information is found on README.md
  *
  * The MIT License (MIT)
  *
  * Copyright (c) 2023 Uri Hartmann
+ * Copyright (c) 2024 Christopher Birmingham
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -47,375 +62,187 @@ namespace CassandraNative;
  * @link      https://www.humancodes.org/projects/php-cql
  */
 
-class BatchStatement
-{
-    public $data;
-    public $queriesCount;
-    private $batchType;
-    private $cassandraObj;
-
-    public function __construct($cassandraObj, $type)
-    {
-        $this->batchType = $type;
-        $this->cassandraObj = $cassandraObj;
-        $this->reset();
-    }
-
-    public function reset()
-    {
-        $this->data = '';
-        $this->queriesCount = 0;
-    }
-
-    function add_simple($cql)
-    {
-        $this->data .= $this->cassandraObj->pack_byte(0) . $this->cassandraObj->pack_long_string($cql);
-        $this->queriesCount++;
-    }
-
-    public function add_prepared($stmt, $values)
-    {
-        // Prepares the frame's body - <type><id><n><values>
-        $frame = $this->cassandraObj->pack_byte(1) . $this->cassandraObj->pack_string(base64_decode($stmt['id'])) . $this->cassandraObj->pack_short(count($values));
-
-        foreach ($stmt['columns'] as $key => $column) {
-            $value = $values[$key];
-
-            $data = $this->cassandraObj->pack_value(
-                $value,
-                $column['type'],
-                $column['subtype1'],
-                $column['subtype2']
-            );
-
-            $frame .= $this->cassandraObj->pack_long_string($data);
-        }
-
-        $this->data .= $frame;
-        $this->queriesCount++;
-    }
-
-    public function get_data()
-    {
-        return $this->cassandraObj->pack_byte($this->batchType) . $this->cassandraObj->pack_short($this->queriesCount) . $this->data;
-    }
-}
-
 class Cassandra
 {
-    const CONSISTENCY_ANY          = 0x0000;
-    const CONSISTENCY_ONE          = 0x0001;
-    const CONSISTENCY_TWO          = 0x0002;
-    const CONSISTENCY_THREE        = 0x0003;
-    const CONSISTENCY_QUORUM       = 0x0004;
-    const CONSISTENCY_ALL          = 0x0005;
-    const CONSISTENCY_LOCAL_QUORUM = 0x0006;
-    const CONSISTENCY_EACH_QUORUM  = 0x0007;
-    const CONSISTENCY_LOCAL_ONE    = 0x000A;
+    public const CONSISTENCY_ANY          = 0x0000;
+    public const CONSISTENCY_ONE          = 0x0001;
+    public const CONSISTENCY_TWO          = 0x0002;
+    public const CONSISTENCY_THREE        = 0x0003;
+    public const CONSISTENCY_QUORUM       = 0x0004;
+    public const CONSISTENCY_ALL          = 0x0005;
+    public const CONSISTENCY_LOCAL_QUORUM = 0x0006;
+    public const CONSISTENCY_EACH_QUORUM  = 0x0007;
+    public const CONSISTENCY_LOCAL_ONE    = 0x000A;
 
-    const COLUMNTYPE_CUSTOM    = 0x0000;
-    const COLUMNTYPE_ASCII     = 0x0001;
-    const COLUMNTYPE_BIGINT    = 0x0002;
-    const COLUMNTYPE_BLOB      = 0x0003;
-    const COLUMNTYPE_BOOLEAN   = 0x0004;
-    const COLUMNTYPE_COUNTER   = 0x0005;
-    const COLUMNTYPE_DECIMAL   = 0x0006;
-    const COLUMNTYPE_DOUBLE    = 0x0007;
-    const COLUMNTYPE_FLOAT     = 0x0008;
-    const COLUMNTYPE_INT       = 0x0009;
-    const COLUMNTYPE_TEXT      = 0x000A;
-    const COLUMNTYPE_TIMESTAMP = 0x000B;
-    const COLUMNTYPE_UUID      = 0x000C;
-    const COLUMNTYPE_VARCHAR   = 0x000D;
-    const COLUMNTYPE_VARINT    = 0x000E;
-    const COLUMNTYPE_TIMEUUID  = 0x000F;
-    const COLUMNTYPE_INET      = 0x0010;
-    const COLUMNTYPE_LIST      = 0x0020;
-    const COLUMNTYPE_MAP       = 0x0021;
-    const COLUMNTYPE_SET       = 0x0022;
+    public const COLUMNTYPE_CUSTOM    = 0x0000;
+    public const COLUMNTYPE_ASCII     = 0x0001;
+    public const COLUMNTYPE_BIGINT    = 0x0002;
+    public const COLUMNTYPE_BLOB      = 0x0003;
+    public const COLUMNTYPE_BOOLEAN   = 0x0004;
+    public const COLUMNTYPE_COUNTER   = 0x0005;
+    public const COLUMNTYPE_DECIMAL   = 0x0006;
+    public const COLUMNTYPE_DOUBLE    = 0x0007;
+    public const COLUMNTYPE_FLOAT     = 0x0008;
+    public const COLUMNTYPE_INT       = 0x0009;
+    public const COLUMNTYPE_TEXT      = 0x000A;
+    public const COLUMNTYPE_TIMESTAMP = 0x000B;
+    public const COLUMNTYPE_UUID      = 0x000C;
+    public const COLUMNTYPE_VARCHAR   = 0x000D;
+    public const COLUMNTYPE_VARINT    = 0x000E;
+    public const COLUMNTYPE_TIMEUUID  = 0x000F;
+    public const COLUMNTYPE_INET      = 0x0010;
+    public const COLUMNTYPE_LIST      = 0x0020;
+    public const COLUMNTYPE_MAP       = 0x0021;
+    public const COLUMNTYPE_SET       = 0x0022;
 
-    const OPCODE_ERROR          = 0x00;
-    const OPCODE_STARTUP        = 0x01;
-    const OPCODE_READY          = 0x02;
-    const OPCODE_AUTHENTICATE   = 0x03;
-    const OPCODE_CREDENTIALS    = 0x04;
-    const OPCODE_OPTIONS        = 0x05;
-    const OPCODE_SUPPORTED      = 0x06;
-    const OPCODE_QUERY          = 0x07;
-    const OPCODE_RESULT         = 0x08;
-    const OPCODE_PREPARE        = 0x09;
-    const OPCODE_EXECUTE        = 0x0A;
-    const OPCODE_REGISTER       = 0x0B;
-    const OPCODE_EVENT          = 0x0C;
-    const OPCODE_BATCH          = 0x0D;
-    const OPCODE_AUTH_CHALLENGE = 0x0E;
-    const OPCODE_AUTH_RESPONSE  = 0x0F;
-    const OPCODE_AUTH_SUCCESS   = 0x10;
+    protected const OPCODE_ERROR          = 0x00;
+    protected const OPCODE_STARTUP        = 0x01;
+    protected const OPCODE_READY          = 0x02;
+    protected const OPCODE_AUTHENTICATE   = 0x03;
+    protected const OPCODE_CREDENTIALS    = 0x04;
+    protected const OPCODE_OPTIONS        = 0x05;
+    protected const OPCODE_SUPPORTED      = 0x06;
+    protected const OPCODE_QUERY          = 0x07;
+    protected const OPCODE_RESULT         = 0x08;
+    protected const OPCODE_PREPARE        = 0x09;
+    protected const OPCODE_EXECUTE        = 0x0A;
+    protected const OPCODE_REGISTER       = 0x0B;
+    protected const OPCODE_EVENT          = 0x0C;
+    protected const OPCODE_BATCH          = 0x0D;
+    protected const OPCODE_AUTH_CHALLENGE = 0x0E;
+    protected const OPCODE_AUTH_RESPONSE  = 0x0F;
+    protected const OPCODE_AUTH_SUCCESS   = 0x10;
 
-    const BATCH_LOGGED          = 0x00;
-    const BATCH_UNLOGGED        = 0x01;
-    const BATCH_COUNTER         = 0x02;
+    public const BATCH_LOGGED   = 0x00;
+    public const BATCH_UNLOGGED = 0x01;
+    public const BATCH_COUNTER  = 0x02;
 
-    const RESULT_KIND_VOID          = 0x001;
-    const RESULT_KIND_ROWS          = 0x002;
-    const RESULT_KIND_SET_KEYSPACE  = 0x003;
-    const RESULT_KIND_PREPARED      = 0x004;
-    const RESULT_KIND_SCHEMA_CHANGE = 0x005;
+    protected const RESULT_KIND_VOID          = 0x001;
+    protected const RESULT_KIND_ROWS          = 0x002;
+    protected const RESULT_KIND_SET_KEYSPACE  = 0x003;
+    protected const RESULT_KIND_PREPARED      = 0x004;
+    protected const RESULT_KIND_SCHEMA_CHANGE = 0x005;
 
-    const FLAG_COMPRESSION    = 0x01;
-    const FLAG_TRACING        = 0x02;
-    const FLAG_CUSTOM_PAYLOAD = 0x04;
-    const FLAG_WARNING        = 0x08;
+    protected const FLAG_COMPRESSION    = 0x01;
+    protected const FLAG_TRACING        = 0x02;
+    protected const FLAG_CUSTOM_PAYLOAD = 0x04;
+    protected const FLAG_WARNING        = 0x08;
 
-    const PROTOCOL_VERSION  = 4;
+    protected const PROTOCOL_VERSION  = 4;
 
-    /* Set to 1 if blobs should return as raw string */
-    public $rawBlobs = 0;
+    protected Socket $socket;
 
-    private $socket = 0;
-    public $async_requests = 0;
-    private int $timeout_connect = 2;
-    private int $timeout_read = 120;
-    private string $host = '';
-    private bool $persistent = false;
-    private string $fullFrame = '';
-    private array $warnings = [];
+    protected string $fullFrame = '';
 
-    public function __construct()
+    protected int $defaultConsistency;
+
+    /**
+     * @param ClusterOptions $options
+     * @throws CassandraException
+     */
+    public function __construct(ClusterOptions $options)
     {
+        $this->socket = new Socket();
+        $this->defaultConsistency = $options->getDefaultConsistency();
+        $this->establishConnection($options);
     }
 
-    /* Makes sure to close() upon destruct */
-    function __destruct()
+    /**
+     * Establishes a connection with a cassandra host based on options provided
+     * by the ClusterBuilder
+     * 
+     * @param ClusterOptions $clusterOptions
+     * 
+     * @throws CassandraException
+     */
+    protected function establishConnection(ClusterOptions $clusterOptions): void
     {
-        if (($this->socket) && (!$this->persistent))
-            $this->read_async();
-        $this->close();
-    }
-
-    public function set_timeout_connect(int $timeout): void
-    {
-        $this->timeout_connect = $timeout;
-    }
-
-    public function set_timeout_read(int $timeout): void
-    {
-        $this->timeout_read = $timeout;
-    }
-
-    // Tries a connection to a Cassandra server
-    private function connect_once(string $host, string $user = '', string $passwd = '', string $dbname = '', int $port = 9042)
-    {
-        // Lookups host name to IP, if needed
-        if ($this->socket)
-            $this->close();
-
-        $this->host = $host;
-        $this->socket = 0;
-        $this->persistent = (substr($host, 0, 2) == 'p:');
-        if ($this->persistent)
-            $host = substr($host, 2);
-
-        // Connects to server
-        if ($this->persistent)
-            $connection = @pfsockopen($host, $port, $errno, $errstr, $this->timeout_connect);
-        else
-            $connection = @fsockopen($host, $port, $errno, $errstr, $this->timeout_connect);
-
-        if ($connection === false) {
-            throw new \Exception('Socket connect to ' . $host . ':' . $port . ' failed: ' .
-                '(' . $errno . ') ' . $errstr);
-            return FALSE;
-        }
-
-        $this->socket = $connection;
+        $this->socket->connect($clusterOptions);
 
         // Don't send startup & authentication if we're using a persistent connection
-        if (!($this->persistent) || (ftell($connection) == 0)) {
-            // Writes a STARTUP frame
-            $frameBody = $this->pack_string_map(['CQL_VERSION' => '4.0.0']);
-            if (!$this->write_frame(self::OPCODE_STARTUP, $frameBody)) {
-                $this->close(true);
-                return FALSE;
-            }
-            stream_set_timeout($this->socket, $this->timeout_connect);
-
-            // Reads incoming frame - should be immediate do we don't
-            // wait for longer than connection timeout, in case Cassandra is non responsive
-            if (($frame = $this->read_frame()) === 0) {
-                $this->close(true);
-                return FALSE;
-            }
-
-            stream_set_timeout($this->socket, $this->timeout_read);
-
-            // Checks if an AUTHENTICATE frame was received
-            if ($frame['opcode'] == self::OPCODE_AUTHENTICATE) {
-                // Writes a CREDENTIALS frame
-                $body =
-                    $this->pack_short(2) .
-                    $this->pack_string('username') .
-                    $this->pack_string($user) .
-                    $this->pack_string('password') .
-                    $this->pack_string($passwd);
-                if (!$this->write_frame(self::OPCODE_CREDENTIALS, $body)) {
-                    $this->close(true);
-                    return FALSE;
-                }
-
-                // Reads incoming frame
-                if (($frame = $this->read_frame()) === 0) {
-                    $this->close(true);
-                    return FALSE;
-                }
-            }
-
-            // Checks if a READY frame was received
-            if ($frame['opcode'] != self::OPCODE_READY) {
-                $this->close(true);
-                throw new \Exception('Missing READY packet. Got ' .
-                    $frame['opcode'] . ') instead');
-                return FALSE;
-            }
+        if ($this->socket->isPersistent()) {
+            return;
         }
 
-        // Checks if we need to set initial keyspace
-        if ($dbname) {
-            // Sends a USE query.
-            $res = $this->query('USE ' . $dbname);
+        // Writes a STARTUP frame
+        $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
+        $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
 
-            // Checks the validity of the response
-            if (!isset($res[0]) || ($res[0]['keyspace'] != $dbname)) {
-                $this->close(true);
-                return FALSE;
-            }
+        // Reads incoming frame - should be immediate do we don't
+        $frame = $this->readFrame();
+        $opcode = $frame['opcode'];
+
+        // Checks if an AUTHENTICATE frame was received
+        if ($opcode == self::OPCODE_AUTHENTICATE) {
+            // Writes a CREDENTIALS frame
+            $body =
+                $this->packShort(2) .
+                $this->packString('username') .
+                $this->packString($clusterOptions->getUsername()) .
+                $this->packString('password') .
+                $this->packString($clusterOptions->getPassword());
+            $this->writeFrame(self::OPCODE_CREDENTIALS, $body);
+
+            // Reads incoming frame
+            $frame = $this->readFrame();
+            $opcode = $frame['opcode'];
         }
 
-        // Returns the socket on success
-        return $this->socket;
+        // Checks if a READY frame was received
+        if ($opcode != self::OPCODE_READY) {
+            throw new ProtocolException('Missing READY packet. Got ' . $opcode . ' instead', $opcode);
+        }
     }
 
     /**
-     * Connects to a Cassandra node.
-     *
-     * @param string $host    Host name/IP to connect to use 'p:' as prefix for persistent connections.
-     * @param string $user    Username in case authentication is needed.
-     * @param string $passwd  Password in case authentication is needed.
-     * @param string $dbname  Keyspace to use upon connection.
-     * @param int    $port    Destination port (default: 9042).
-     * @param int    $retries Number of connection retries (default: 3, useful for persistent connections in case of timeouts).
-     *
-     * @return int The socket descriptor used. FALSE if unable to connect.
-     * @access public
+     * Connects the client to the specified keyspace. Same as using a 
+     * USE $keyspace query
+     * 
+     * @param string $keyspace
+     * 
+     * @throws CassandraException
      */
-    public function connect(string $host, string $user = '', string $passwd = '', string $dbname = '', int $port = 9042, int $retries = 3)
+    public function connect(string $keyspace): void
     {
-        $result = false;
-        $lastException = null;
-        for ($i = 0; $i < $retries; $i++) {
-            try {
-                $result = $this->connect_once($host, $user, $passwd, $dbname, $port);
-            } catch (Exception $e) {
-                $lastException = $e;
-            }
-            if ($result)
-                break;
-            usleep(rand(1000000, 2000000));
-        }
-
-        if ($result)
-            return $result;
-        else if ($lastExecption)
-            throw $lastException;
-        else
-            return false;
+        $stmt = new SimpleStatement('USE ' . $keyspace);
+        $this->execute($stmt);
     }
 
     /**
-     * Closes an opened connection.
-     *
-     * @param bool    $closePersistent Set to TRUE to close persistent conections as well
-     *
-     * @return int 1
-     * @access public
+     * Closes an open client connection.
      */
-    public function close(bool $closePersistent = false)
+    public function close(): void
     {
-        if (($this->socket) && ($closePersistent || (!$this->persistent))) {
-            fclose($this->socket);
-            $this->socket = 0;
-        }
-        return 1;
+        $this->socket->close();
     }
 
     /**
      * Queries the database using the given CQL.
      *
-     * @param string $cql         The query to run.
-     * @param int    $consistency Consistency level for the operation.
-     * @param array  $values      Values to bind in a sequential or key=>value format,
-     *                            where key is the column's name.
-     *
-     * @return array Result of the query. Might be an array of rows (for
-     *               SELECT), or the operation's result (for USE, CREATE,
-     *               ALTER, UPDATE).
-     *               NULL on error.
-     * @access public
+     * @param StatementInterface $stmt The query to run.
+     * @param array $values            Values to bind in a sequential or key=>value format,
+     *                                 where key is the column's name.
+     * @param ?int $consistency        Consistency level for the operation.
+     * 
+     * @return Rows Result of the query. Might be an array of rows (for
+     *              SELECT), or the operation's result (for USE, CREATE,
+     *              ALTER, UPDATE).
+     * 
+     * @throws CassandraException
      */
-    public function query($cql, $consistency = self::CONSISTENCY_ALL, $values = [])
-    {
-        if ($this->async_requests) {
-            throw new \Exception('Cannot query while async requests are pending. Call read_async() first');
-            return NULL;
-        }
+    public function execute(
+        StatementInterface $stmt,
+        array $values = [],
+        ?int $consistency = null
+    ): Rows {
+        $consistency ??= $this->defaultConsistency;
 
-        if (!$this->socket) {
-            throw new  \Exception('Not connected');
-            return NULL;
-        }
+        $rows = match (true) {
+            $stmt instanceof PreparedStatement => $this->executePreparedStatement($stmt, $values, $consistency),
+            $stmt instanceof SimpleStatement => $this->executeSimpleStatement($stmt, $values, $consistency)
+        };
 
-        // Prepares the frame's body
-        // TODO: Support the new <flags> byte
-        $frame = $this->pack_long_string($cql) . $this->pack_short($consistency);
-        if (count($values)) {
-            $values_data = '';
-            $namedParameters = false;
-            foreach ($values as $key => $value) {
-                $namedParameters = $namedParameters || is_string($key);
-
-                if ($namedParameters)
-                    $values_data .= $this->pack_string($key);
-
-                $data = $this->pack_value($value[0], $value[1], 0, 0);
-
-                $values_data .= $this->pack_long_string($data);
-            }
-
-            $frame .= $this->pack_byte(0x01 | ($namedParameters ? 0x40 : 0x00)) .
-                $this->pack_short(count($values)) .
-                $values_data;
-        } else {
-            $frame .= $this->pack_byte(0x00);
-        }
-
-        // Writes a QUERY frame and return the result
-        return $this->request_result(self::OPCODE_QUERY, $frame);
-    }
-
-    /**
-     * Returns a binded parameter to be used with the query method
-     *
-     * @param mixed $value Value to bind        The query to run.
-     * @param int   $type  Value type out of one of the Cassandra::COLUMNTYPE_* constants
-     *
-     * @return array value to be used as part of the $values parameter of the query method
-     *
-     * @access public
-     * @static
-     */
-    public static function bind_param($value, $column_type)
-    {
-        return [$value, $column_type];
+        return new Rows($rows);
     }
 
     /**
@@ -423,129 +250,109 @@ class Cassandra
      *
      * @param string $cql The query to prepare.
      *
-     * @return array The statement's information to be used with the execute
-     *               method. NULL on error.
-     * @access public
+     * @return PreparedStatement The statement's information to be used with the execute
+     *                           method.
+     *
+     * @throws CassandraException
      */
-    public function prepare($cql)
+    public function prepare(string $cql): PreparedStatement
     {
-        if ($this->async_requests) {
-            throw new \Exception('Cannot prepare while async requests are pending. Call read_async() first');
-            return NULL;
-        }
-
         // Prepares the frame's body
-        $frame = $this->pack_long_string($cql);
+        $frame = $this->packLongString($cql);
 
         // Writes a PREPARE frame and return the result
-        return $this->request_result(self::OPCODE_PREPARE, $frame);
+        $retval = $this->requestResult(self::OPCODE_PREPARE, $frame);
+
+        return new PreparedStatement($retval['id'], $retval['columns']);
     }
 
     /**
      * Executes a prepared statement.
      *
-     * @param array $stmt        The prepared statement as returned from the
-     *                           prepare method.
-     * @param array $values      Values to bind in key=>value format where key is
-     *                           the column's name.
-     * @param int   $consistency Consistency level for the operation.
-     *
-     * @param bool  $async       Use 1 if you wish to perform the query asynchronously.
+     * @param PreparedStatement $stmt The prepared statement as returned from the
+     *                                prepare method.
+     * @param array $values           Bind values for the prepared statement 
+     * @param int $consistency        Consistency level for the operation.
      *
      * @return array Result of the execution. Might be an array of rows (for
      *               SELECT), or the operation's result (for USE, CREATE,
      *               ALTER, UPDATE).
-     *               NULL on error.
-     * @access public
+     *
+     * @throws CassandraException
      */
-    public function execute($stmt, $values, $consistency = self::CONSISTENCY_ALL, $async = 0)
-    {
-        if ((!$async) && ($this->async_requests)) {
-            throw new \Exception('Cannot execute while async requests are pending. Call read_async() first');
-            return NULL;
-        }
-
+    protected function executePreparedStatement(
+        PreparedStatement $stmt,
+        array $values,
+        int $consistency
+    ): array {
         // Prepares the frame's body - <id><count><values map>
-        $frame = base64_decode($stmt['id']);
-        $frame = $this->pack_string($frame) .
-            $this->pack_short($consistency) .
-            $this->pack_byte(0x01) . // values only
-            $this->pack_short(count($values));
+        $frame = base64_decode($stmt->getId());
+        $frame = $this->packString($frame) .
+            $this->packShort($consistency) .
+            $this->packByte(0x01) . // values only
+            $this->packShort(count($values));
 
-        foreach ($stmt['columns'] as $key => $column) {
+        foreach ($stmt->getColumns() as $key => $column) {
             $value = $values[$key];
 
-            $data = $this->pack_value(
+            $data = $this->packValue(
                 $value,
                 $column['type'],
                 $column['subtype1'],
                 $column['subtype2']
             );
 
-            $frame .= $this->pack_long_string($data);
+            $frame .= $this->packLongString($data);
         }
 
-        if ($async) {
-            $this->async_requests++;
-            return $this->write_frame(self::OPCODE_EXECUTE, $frame, 0, 1);
-        } else {
-            // Writes a EXECUTE frame and return the result
-            return $this->request_result(self::OPCODE_EXECUTE, $frame);
-        }
+        // Writes a EXECUTE frame and return the result
+        return $this->requestResult(self::OPCODE_EXECUTE, $frame);
     }
 
     /**
-     * Read all pending async results.
-     *
-     * @return array Result of the executions. Might be an array of rows (for
-     *               SELECT), or the operation's result (for USE, CREATE,
-     *               ALTER, UPDATE).
-     *               NULL on error.
-     * @access public
-     */
-    public function read_async()
-    {
-        $retval = [];
-        while ($this->async_requests) {
-            // Reads incoming frame
-            $frame = $this->read_frame();
-            if (!$frame)
-                return NULL;
-
-            // Parses the incoming frame
-            if ($frame['opcode'] == self::OPCODE_RESULT) {
-                $retval[] = $this->parse_result($frame['body']);
-            } else {
-                $this->close(true);
-                throw new \Exception('Unknown opcode ' . $frame['opcode']);
-                return NULL;
-            }
-
-            $this->async_requests--;
-        }
-        return $retval;
-    }
-
-    /**
-     * Executes a batch of statements.
-     *
-     * @param CassandraBatch $batchObj    A batch of statements to execute.
-     * @param int            $consistency Consistency level for the operation.
-     *
+     * Executes a simple statement
+     * 
+     * @param SimpleStatement $stmt The statement to be run.
+     * @param array $values         Values to bind to the statement being run.
+     * @param int $consistency      Consistency level for the operation.
+     * 
      * @return array Result of the execution. Might be an array of rows (for
      *               SELECT), or the operation's result (for USE, CREATE,
      *               ALTER, UPDATE).
-     *               NULL on error.
-     * @access public
+     * 
+     * @throws CassandraException
      */
-    public function batch($batchObj, $consistency = self::CONSISTENCY_ALL)
-    {
-        // Prepares the frame's body - <id><count><values map>
-        // TODO: Add support for the new flags byte
-        $frame = $batchObj->get_data() . $this->pack_short($consistency) . $this->pack_byte(0);
+    protected function executeSimpleStatement(
+        SimpleStatement $stmt,
+        array $values,
+        int $consistency
+    ): array {
+        // Prepares the frame's body
+        // TODO: Support the new <flags> byte
+        $frame = $this->packLongString($stmt->getStatement()) . $this->packShort($consistency);
+        if (count($values)) {
+            $values_data = '';
+            $namedParameters = false;
+            foreach ($values as $key => $value) {
+                $namedParameters = $namedParameters || is_string($key);
 
-        // Writes a EXECUTE frame and return the result
-        return $this->request_result(self::OPCODE_BATCH, $frame);
+                if ($namedParameters) {
+                    $values_data .= $this->packString($key);
+                }
+
+                $data = $this->packValue($value[0], $value[1], 0, 0);
+
+                $values_data .= $this->packLongString($data);
+            }
+
+            $frame .= $this->packByte(0x01 | ($namedParameters ? 0x40 : 0x00)) .
+                $this->packShort(count($values)) .
+                $values_data;
+        } else {
+            $frame .= $this->packByte(0x00);
+        }
+
+        return $this->requestResult(self::OPCODE_QUERY, $frame);
     }
 
     /**
@@ -557,85 +364,79 @@ class Cassandra
      * @return array Result of the request. Might be an array of rows (for
      *               SELECT), or the operation's result (for USE, CREATE,
      *               ALTER, UPDATE).
-     *               NULL on error.
-     * @access private
+     *
+     * @throws CassandraException
      */
-    private function request_result($opcode, $body)
+    protected function requestResult(int $opcode, string $body): array
     {
         // Writes the frame
-        if (!$this->write_frame($opcode, $body))
-            return NULL;
+        $this->writeFrame($opcode, $body);
 
         // Reads incoming frame
-        $frame = $this->read_frame();
-        if (!$frame)
-            return NULL;
+        $frame = $this->readFrame();
+        $opcode = $frame['opcode'];
 
         // Parses the incoming frame
-        if ($frame['opcode'] == self::OPCODE_RESULT) {
-            return $this->parse_result($frame['body']);
-        } else {
-            $this->close(true);
-            throw new \Exception('Unknown opcode ' . $frame['opcode']);
-            return NULL;
+        if ($opcode == self::OPCODE_RESULT) {
+            return $this->parseResult($frame['body']);
         }
+
+        throw new ProtocolException('Unknown opcode returned from cassandra', $opcode);
     }
 
     /**
      * Packs and writes a frame to the socket.
      *
-     * @param int    $opcode   Frame's opcode.
-     * @param string $body     Frame's body.
-     * @param int    $response Frame's response flag.
-     * @param int    $stream   Frame's stream id.
+     * @param int $opcode   Frame's opcode.
+     * @param string $body  Frame's body.
+     * @param int $response Frame's response flag.
+     * @param int $stream   Frame's stream id.
      *
-     * @return bool true on success, false on error.
-     * @access private
+     * @throws CassandraException
      */
-    private function write_frame($opcode, $body, $response = 0, $stream = 0)
+    protected function writeFrame(int $opcode, string $body, int $response = 0, int $stream = 0): void
     {
         // Prepares the outgoing packet
-        $frame = $this->pack_frame($opcode, $body, $response, $stream);
+        $frame = $this->packFrame($opcode, $body, $response, $stream);
 
         // Writes frame to socket
-        try {
-            fwrite($this->socket, $frame);
-        } catch (Exception $e) {
-            $this->close(true);
-            throw $e;
-        }
-
-        return true;
+        $this->socket->write($frame);
     }
 
     /**
-     * Reads data with a specific size from socket.
-     *
-     * @param int $size Requested data size.
-     *
-     * @return string Incoming data, false on error.
-     * @access private
+     * Converts an error message returned from Cassandra into an exception
+     * 
+     * @param int $errorCode       The error code returned from cassandra
+     * @param string $errorMessage The error message returned from cassandra
+     * 
+     * @throws CassandraException
      */
-    private function read_size($size, $header = false)
+    protected function convertCassandraErrorToException(int $errorCode, string $errorMessage): void
     {
-        if (!$this->socket)
-            return false;
+        $exception = match ($errorCode) {
+            0x0000, 0x1001, 0x1002, 0x1003 => ServerException::class,
+            0x000A => ProtocolException::class,
+            0x0100 => AuthenticationException::class,
+            0x1100, 0x1200 => TimeoutException::class,
+            0x1300, 0x1400, 0x1500, 0x2000, 0x2200, 0x2300, 0x2400, 0x2500 => QueryException::class,
+            0x2100 => UnauthorizedException::class
+        };
 
-        $data = '';
-        while (strlen($data) < $size) {
-            $readSize = $size - strlen($data);
-            $buff = @fread($this->socket, $readSize);
-            if (($buff === false) || (stream_get_meta_data($this->socket)['timed_out'])) {
-                $this->close(true);
-                throw new \Exception('Read error');
-                return false;
-            }
-            $data .= $buff;
-        }
-        return $data;
+        throw new $exception($errorMessage, $errorCode);
     }
 
-    private function parse_incoming_frame($header, $body)
+    /**
+     * Parses a returned Frame send back by cassandra. Checks for any errors returned 
+     * and throws an exception
+     * 
+     * @param string $header The returned frame header
+     * @param string $body   The returned frame body
+     * 
+     * @return array         The parsed frame converted into an opcode and body
+     * 
+     * @throws CassandraException
+     */
+    protected function parseIncomingFrame(string $header, string $body): array
     {
         $flags = ord($header[1]);
 
@@ -645,60 +446,53 @@ class Cassandra
 
         $this->fullFrame = $header . $body;
 
-        $this->warnings = [];
         if ($flags & self::FLAG_WARNING) {
             $iPos = 0;
-            $warningCount = $this->pop_short($body, $iPos);
+            $warningCount = $this->popShort($body, $iPos);
             for ($i = 0; $i < $warningCount; $i++) {
-                $value = $this->pop_string($body, $iPos);
-                $this->warnings[] = $value;
+                $warning = $this->popString($body, $iPos);
+                trigger_error('Warning returned while processing Cassandra query: ' . $warning, E_USER_WARNING);
             }
-            myWarningHandler('Cassandra (' . $this->host . '): ' . json_encode($this->warnings));
+
             $body = substr($body, $iPos);
         }
 
         // If we got an error - trigger it and return an error
         if ($opcode == self::OPCODE_ERROR) {
             // ERROR: <int code><string msg>
-            $errCode = $this->int_from_bin($body, 0, 4);
+            $errCode = $this->intFromBin($body, 0, 4);
             $bodyOffset = 4;  // Must be passed by reference
-            $errMsg = $this->pop_string($body, $bodyOffset);
-
-            $this->close(true);
-            throw new \Exception('Error 0x' . sprintf('%04X', $errCode) .
-                ' received from server: ' . $errMsg);
-            return false;
+            $errMsg = $this->popString($body, $bodyOffset);
+            $this->convertCassandraErrorToException($errCode, $errMsg);
         }
 
-        return ['opcode' => $opcode, 'body' => $body];
+        return [
+            'opcode' => $opcode,
+            'body' => $body
+        ];
     }
 
     /**
      * Reads pending frame from the socket.
      *
-     * @return string Incoming data, false on error.
-     * @access private
+     * @return array Incoming data.
+     *
+     * @throws CassandraException
      */
-    private function read_frame()
+    protected function readFrame(): array
     {
         // Read the 9 bytes header
-        if (!($header = $this->read_size(9, true))) {
-            throw new \Exception('Missing header (' . strlen($header) . ')');
-            return false;
-        }
-
-        $length = $this->int_from_bin($header, 5, 4, 0);
+        $header = $this->socket->read(9);
+        $length = $this->intFromBin($header, 5, 4, 0);
 
         // Read frame body, if exists
+        $body = '';
+        
         if ($length) {
-            if (!($body = $this->read_size($length))) {
-                return false;
-            }
-        } else {
-            $body = '';
+            $body = $this->socket->read($length);
         }
 
-        return $this->parse_incoming_frame($header, $body);
+        return $this->parseIncomingFrame($header, $body);
     }
 
     /**
@@ -706,30 +500,30 @@ class Cassandra
      *
      * @param string $body Frame's body
      *
-     * @return array Parsed frame. Might be an array of rows (for SELECT),
-     *               or the operation's result (for USE, CREATE, ALTER,
-     *               UPDATE).
-     *               NULL on error.
-     * @access private
+     * @return array       Parsed frame. Might be an array of rows (for SELECT),
+     *                     or the operation's result (for USE, CREATE, ALTER,
+     *                     UPDATE).
+     *
+     * @throws CassandraException
      */
-    private function parse_result($body)
+    protected function parseResult(string $body): array
     {
         // Parse RESULTS opcode
         $bodyOffset = 0;
-        $kind = $this->pop_int($body, $bodyOffset);
+        $kind = $this->popInt($body, $bodyOffset);
 
         switch ($kind) {
             case self::RESULT_KIND_VOID:
                 return [['result' => 'success']];
             case self::RESULT_KIND_ROWS:
-                return $this->parse_rows($body, $bodyOffset);
+                return $this->parseRows($body, $bodyOffset);
             case self::RESULT_KIND_SET_KEYSPACE:
-                $keyspace = $this->pop_string($body, $bodyOffset);
+                $keyspace = $this->popString($body, $bodyOffset);
                 return [['keyspace' => $keyspace]];
             case self::RESULT_KIND_PREPARED:
                 // <string id><metadata>
-                $id = base64_encode($this->pop_string($body, $bodyOffset));
-                $metadata = $this->parse_rows_metadata($body, $bodyOffset, true);
+                $id = base64_encode($this->popString($body, $bodyOffset));
+                $metadata = $this->parseRowsMetadata($body, $bodyOffset, true);
                 $columns = [];
 
                 foreach ($metadata as $column) {
@@ -743,75 +537,78 @@ class Cassandra
                 return ['id' => $id, 'columns' => $columns];
             case self::RESULT_KIND_SCHEMA_CHANGE:
                 // <string change><string keyspace><string table>
-                $change = $this->pop_string($body, $bodyOffset);
-                $target = $this->pop_string($body, $bodyOffset);
-                $options = $this->pop_string($body, $bodyOffset);
+                $change = $this->popString($body, $bodyOffset);
+                $target = $this->popString($body, $bodyOffset);
+                $options = $this->popString($body, $bodyOffset);
                 return [[
                     'change' => $change, 'target' => $target,
                     'options' => $options
                 ]];
         }
 
-        throw new \Exception('Unknown result kind ' . $kind . ' full frame: ' . bin2hex($this->fullFrame));
+        throw new ProtocolException('Unknown result kind ' . $kind . ' full frame: ' . bin2hex($this->fullFrame));
     }
 
     /**
      * Parses a RESULT Rows metadata (also used for RESULT Prepared), starting
      * from the offset, and advancing it in the process.
      *
-     * @param string $body       Metadata body.
-     * @param string $bodyOffset Metadata body offset to start from.
+     * @param string $body    Metadata body.
+     * @param int $bodyOffset Metadata body offset to start from.
      *
      * @return array Columns list
-     * @access private
      */
-    private function parse_rows_metadata(string $body, int &$bodyOffset, bool $readPk = false)
+    protected function parseRowsMetadata(string $body, int &$bodyOffset, bool $readPk = false): array
     {
-        $flags = $this->pop_int($body, $bodyOffset);
-        $columns_count = $this->pop_int($body, $bodyOffset);
+        $flags = $this->popInt($body, $bodyOffset);
+        $columns_count = $this->popInt($body, $bodyOffset);
 
         if ($readPk) {
-            $pk_count = $this->pop_int($body, $bodyOffset);
+            $pk_count = $this->popInt($body, $bodyOffset);
 
-            for ($i = 0; $i < $pk_count; $i++)
-                $this->pop_short($body, $bodyOffset);
+            for ($i = 0; $i < $pk_count; $i++) {
+                $this->popShort($body, $bodyOffset);
+            }
         }
 
         $global_table_spec = ($flags & 0x0001);
         if ($global_table_spec) {
-            $keyspace = $this->pop_string($body, $bodyOffset);
-            $table = $this->pop_string($body, $bodyOffset);
+            $keyspace = $this->popString($body, $bodyOffset);
+            $table = $this->popString($body, $bodyOffset);
         }
 
         $columns = [];
 
         for ($i = 0; $i < $columns_count; $i++) {
             if (!$global_table_spec) {
-                $keyspace = $this->pop_string($body, $bodyOffset);
-                $table = $this->pop_string($body, $bodyOffset);
+                $keyspace = $this->popString($body, $bodyOffset);
+                $table = $this->popString($body, $bodyOffset);
             }
 
-            $column_name = $this->pop_string($body, $bodyOffset);
-            $column_type = $this->pop_short($body, $bodyOffset);
+            $column_name = $this->popString($body, $bodyOffset);
+            $column_type = $this->popShort($body, $bodyOffset);
             if ($column_type == self::COLUMNTYPE_CUSTOM) {
-                $column_type = $this->pop_string($body, $bodyOffset);
+                $column_type = $this->popString($body, $bodyOffset);
                 $column_subtype1 = 0;
                 $column_subtype2 = 0;
             } elseif (($column_type == self::COLUMNTYPE_LIST) ||
                 ($column_type == self::COLUMNTYPE_SET)
             ) {
-                $column_subtype1 = $this->pop_short($body, $bodyOffset);
-                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM)
-                    $column_subtype1 = $this->pop_string($body, $bodyOffset);
+                $column_subtype1 = $this->popShort($body, $bodyOffset);
+                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM) {
+                    $column_subtype1 = $this->popString($body, $bodyOffset);
+                }
                 $column_subtype2 = 0;
             } elseif ($column_type == self::COLUMNTYPE_MAP) {
-                $column_subtype1 = $this->pop_short($body, $bodyOffset);
-                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM)
-                    $column_subtype1 = $this->pop_string($body, $bodyOffset);
+                $column_subtype1 = $this->popShort($body, $bodyOffset);
+                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM) {
+                    $column_subtype1 = $this->popString($body, $bodyOffset);
+                }
 
-                $column_subtype2 = $this->pop_short($body, $bodyOffset);
-                if ($column_subtype2 == self::COLUMNTYPE_CUSTOM)
-                    $column_subtype2 = $this->pop_string($body, $bodyOffset);
+                $column_subtype2 = $this->popShort($body, $bodyOffset);
+                if ($column_subtype2 == self::COLUMNTYPE_CUSTOM) {
+                    $column_subtype2 = $this->popString($body, $bodyOffset);
+                }
             } else {
                 $column_subtype1 = 0;
                 $column_subtype2 = 0;
@@ -831,26 +628,26 @@ class Cassandra
     /**
      * Parses a RESULT Rows kind.
      *
-     * @param string $body       Frame body to parse.
-     * @param string $bodyOffset Offset to start from.
+     * @param string $body    Frame body to parse.
+     * @param int $bodyOffset Offset to start from.
      *
      * @return array Rows with associative array of the records.
-     * @access private
+     *
+     * @throws CassandraException
      */
-    private function parse_rows($body, $bodyOffset)
+    protected function parseRows(string $body, int $bodyOffset): array
     {
         // <metadata><int count><rows_content>
-        $columns = $this->parse_rows_metadata($body, $bodyOffset);
-        $columns_count = count($columns);
+        $columns = $this->parseRowsMetadata($body, $bodyOffset);
 
-        $rows_count = $this->pop_int($body, $bodyOffset);
+        $rows_count = $this->popInt($body, $bodyOffset);
 
         $retval = [];
         for ($i = 0; $i < $rows_count; $i++) {
             $row = [];
             foreach ($columns as $col) {
-                $content = $this->pop_bytes($body, $bodyOffset);
-                $value = $this->unpack_value(
+                $content = $this->popBytes($body, $bodyOffset);
+                $value = $this->unpackValue(
                     $content,
                     $col['type'],
                     $col['subtype1'],
@@ -869,111 +666,70 @@ class Cassandra
      * Packs a value to its binary form based on a column type. Used for
      * prepared statement.
      *
-     * @param mixed $value    Value to pack.
-     * @param int   $type     Column type.
-     * @param int   $subtype1 Sub column type for list/set or key for map.
-     * @param int   $subtype2 Sub column value type for map.
+     * @param mixed $value  Value to pack.
+     * @param int $type     Column type.
+     * @param int $subtype1 Sub column type for list/set or key for map.
+     * @param int $subtype2 Sub column value type for map.
      *
      * @return string Binary form of the value.
-     * @access public
+     *
+     * @throws \InvalidArgumentException
      */
-    public function pack_value($value, $type, $subtype1 = 0, $subtype2 = 0)
+    protected function packValue(mixed $value, int $type, int $subtype1 = 0, int $subtype2 = 0): string
     {
-        switch ($type) {
-            case self::COLUMNTYPE_CUSTOM:
-            case self::COLUMNTYPE_BLOB:
-                return $this->pack_blob($value);
-            case self::COLUMNTYPE_ASCII:
-            case self::COLUMNTYPE_TEXT:
-            case self::COLUMNTYPE_VARCHAR:
-                return $value;
-            case self::COLUMNTYPE_BIGINT:
-            case self::COLUMNTYPE_COUNTER:
-            case self::COLUMNTYPE_TIMESTAMP:
-                return $this->pack_bigint($value);
-            case self::COLUMNTYPE_BOOLEAN:
-                return $this->pack_boolean($value);
-            case self::COLUMNTYPE_DECIMAL:
-                return $this->pack_decimal($value);
-            case self::COLUMNTYPE_DOUBLE:
-                return $this->pack_double($value);
-            case self::COLUMNTYPE_FLOAT:
-                return $this->pack_float($value);
-            case self::COLUMNTYPE_INT:
-                return $this->pack_int($value);
-            case self::COLUMNTYPE_UUID:
-            case self::COLUMNTYPE_TIMEUUID:
-                return $this->pack_uuid($value);
-            case self::COLUMNTYPE_VARINT:
-                return $this->pack_varint($value);
-            case self::COLUMNTYPE_INET:
-                return $this->pack_inet($value);
-            case self::COLUMNTYPE_LIST:
-            case self::COLUMNTYPE_SET:
-                return $this->pack_list($value, $subtype1);
-            case self::COLUMNTYPE_MAP:
-                return $this->pack_map($value, $subtype1, $subtype2);
-        }
-
-        throw new \Exception('Unknown column type ' . $type);
-        return NULL;
+        return match ($type) {
+            self::COLUMNTYPE_CUSTOM, self::COLUMNTYPE_BLOB => $this->packBlob($value),
+            self::COLUMNTYPE_ASCII, self::COLUMNTYPE_TEXT, self::COLUMNTYPE_VARCHAR => $value,
+            self::COLUMNTYPE_BIGINT, self::COLUMNTYPE_COUNTER, self::COLUMNTYPE_TIMESTAMP => $this->packBigint($value),
+            self::COLUMNTYPE_BOOLEAN => $this->packBoolean($value),
+            self::COLUMNTYPE_DECIMAL => $this->packDecimal($value),
+            self::COLUMNTYPE_DOUBLE => $this->packDouble($value),
+            self::COLUMNTYPE_FLOAT => $this->packFloat($value),
+            self::COLUMNTYPE_INT => $this->packInt($value),
+            self::COLUMNTYPE_UUID, self::COLUMNTYPE_TIMEUUID => $this->packUuid($value),
+            self::COLUMNTYPE_VARINT => $this->packVarInt($value),
+            self::COLUMNTYPE_INET => $this->packInet($value),
+            self::COLUMNTYPE_LIST, self::COLUMNTYPE_SET => $this->packList($value, $subtype1),
+            self::COLUMNTYPE_MAP => $this->packMap($value, $subtype1, $subtype2),
+            default => throw new \InvalidArgumentException('Unknown column type ' . $type)
+        };
     }
 
     /**
      * Unpacks a value from its binary form based on a column type. Used for
      * parsing rows.
      *
-     * @param string $content  Content to unpack.
-     * @param int    $type     Column type.
-     * @param int    $subtype1 Sub column type for list/set or key for map.
-     * @param int    $subtype2 Sub column value type for map.
+     * @param ?string $content Content to unpack.
+     * @param int $type        Column type.
+     * @param int $subtype1    Sub column type for list/set or key for map.
+     * @param int $subtype2    Sub column value type for map.
      *
-     * @return mixed Unpacked value.
-     * @access private
+     * @return mixed The unpacked value.
+     *
+     * @throws CassandraException
      */
-    private function unpack_value($content, $type, $subtype1 = 0, $subtype2 = 0)
+    protected function unpackValue(?string $content, int $type, int $subtype1 = 0, int $subtype2 = 0): mixed
     {
-        if ($content === NULL)
+        if ($content === NULL) {
             return NULL;
-
-        switch ($type) {
-            case self::COLUMNTYPE_CUSTOM:
-            case self::COLUMNTYPE_BLOB:
-                return $this->unpack_blob($content);
-            case self::COLUMNTYPE_ASCII:
-            case self::COLUMNTYPE_TEXT:
-            case self::COLUMNTYPE_VARCHAR:
-                return $content;
-            case self::COLUMNTYPE_BIGINT:
-            case self::COLUMNTYPE_COUNTER:
-            case self::COLUMNTYPE_TIMESTAMP:
-                return $this->unpack_bigint($content);
-            case self::COLUMNTYPE_BOOLEAN:
-                return $this->unpack_boolean($content);
-            case self::COLUMNTYPE_DECIMAL:
-                return $this->unpack_decimal($content);
-            case self::COLUMNTYPE_DOUBLE:
-                return $this->unpack_double($content);
-            case self::COLUMNTYPE_FLOAT:
-                return $this->unpack_float($content);
-            case self::COLUMNTYPE_INT:
-                return $this->unpack_int($content);
-            case self::COLUMNTYPE_UUID:
-            case self::COLUMNTYPE_TIMEUUID:
-                return $this->unpack_uuid($content);
-            case self::COLUMNTYPE_VARINT:
-                return $this->unpack_varint($content);
-            case self::COLUMNTYPE_INET:
-                return $this->unpack_inet($content);
-            case self::COLUMNTYPE_LIST:
-            case self::COLUMNTYPE_SET:
-                return $this->unpack_list($content, $subtype1);
-            case self::COLUMNTYPE_MAP:
-                return $this->unpack_map($content, $subtype1, $subtype2);
         }
 
-        throw new \Exception('Unknown column type ' . $type);
-        return NULL;
+        return match ($type) {
+            self::COLUMNTYPE_CUSTOM, self::COLUMNTYPE_BLOB => $this->unpackBlob($content),
+            self::COLUMNTYPE_ASCII, self::COLUMNTYPE_TEXT, self::COLUMNTYPE_VARCHAR => $content,
+            self::COLUMNTYPE_BIGINT, self::COLUMNTYPE_COUNTER, self::COLUMNTYPE_TIMESTAMP => $this->unpackBigint($content),
+            self::COLUMNTYPE_BOOLEAN => $this->unpackBoolean($content),
+            self::COLUMNTYPE_DECIMAL => $this->unpackDecimal($content),
+            self::COLUMNTYPE_DOUBLE => $this->unpackDouble($content),
+            self::COLUMNTYPE_FLOAT => $this->unpackFloat($content),
+            self::COLUMNTYPE_INT => $this->unpackInt($content),
+            self::COLUMNTYPE_UUID, self::COLUMNTYPE_TIMEUUID => $this->unpackUuid($content),
+            self::COLUMNTYPE_VARINT => $this->unpackVarInt($content),
+            self::COLUMNTYPE_INET => $this->unpackInet($content),
+            self::COLUMNTYPE_LIST, self::COLUMNTYPE_SET => $this->unpackList($content, $subtype1),
+            self::COLUMNTYPE_MAP => $this->unpackMap($content, $subtype1, $subtype2),
+            default => throw new ProtocolException('Unknown column type returned from cassandra ' . $type)
+        };
     }
 
     /**
@@ -982,12 +738,12 @@ class Cassandra
      * @param string $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_blob($value)
+    protected function packBlob(string $value): string
     {
-        if (substr($value, 0, 2) == '0x')
+        if (str_starts_with($value, '0x')) {
             $value = pack('H*', substr($value, 2));
+        }
         return $value;
     }
 
@@ -997,16 +753,13 @@ class Cassandra
      * @param string $content Content to unpack.
      *
      * @return string Unpacked value in hexadecimal representation.
-     * @access private
      */
-    private function unpack_blob($content, $prefix = '0x')
+    protected function unpackBlob(string $content, string $prefix = '0x'): string
     {
-        if ($this->rawBlobs)
-            return $content;
-
         $value = unpack('H*', $content);
-        if ($value[1])
+        if ($value[1]) {
             $value[1] = $prefix . $value[1];
+        }
         return $value[1];
     }
 
@@ -1016,11 +769,10 @@ class Cassandra
      * @param int $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_bigint($value)
+    protected function packBigint(int $value): string
     {
-        return $this->bin_from_int($value, 8, 1);
+        return $this->binFromInt($value, 8, 1);
     }
 
     /**
@@ -1029,29 +781,26 @@ class Cassandra
      * @param string $content Content to unpack.
      *
      * @return int Unpacked value.
-     * @access private
      */
-    private function unpack_bigint($content)
+    protected function unpackBigint(string $content): int
     {
-        return $this->int_from_bin($content, 0, 8, 1);
+        return $this->intFromBin($content, 0, 8, 1);
     }
 
     /**
      * Packs a COLUMNTYPE_BOOLEAN value to its binary form.
      *
-     * @param boolean $value Value to pack.
+     * @param ?bool $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_boolean($value)
+    protected function packBoolean(?bool $value): string
     {
-        if ($value === NULL)
+        if ($value === NULL) {
             return '';
-        if ($value == TRUE)
-            return chr(1);
-        else
-            return chr(0);
+        }
+
+        return ($value)? chr(1) : chr(0);
     }
 
     /**
@@ -1059,33 +808,32 @@ class Cassandra
      *
      * @param string $content Content to unpack.
      *
-     * @return bool Unpacked value.
-     * @access private
+     * @return ?bool Unpacked value.
      */
-    private function unpack_boolean($content)
+    protected function unpackBoolean(string $content): ?bool
     {
         if (strlen($content) > 0) {
             $c = ord($content[0]);
-            if ($c == 1)
-                return TRUE;
-            elseif ($c == 0)
-                return FALSE;
-            else
-                return NULL;
+            if ($c == 1) {
+                return true;
+            } elseif ($c == 0) {
+                return false;
+            } else {
+                return null;
+            }
         }
 
-        return NULL;
+        return null;
     }
 
     /**
      * Packs a COLUMNTYPE_DECIMAL value to its binary form.
      *
-     * @param decimal $value Value to pack.
+     * @param float|int $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_decimal($value)
+    protected function packDecimal(float|int $value): string
     {
         // Based on http://docs.oracle.com/javase/7/docs/api/java/math/BigDecimal.html
 
@@ -1104,15 +852,10 @@ class Cassandra
             $negativeScale--;
         }
 
-        $scale = $negativeScale - $positiveScale;
-        if ($negativeScale)
-            $scale = -$negativeScale;
-        else
-            $scale = -$positiveScale;
-
+        $scale = $negativeScale ? -$negativeScale : -$positiveScale;
         $unscaledValue = $value / pow(10, -$scale);
 
-        return $this->pack_int($scale) . $this->pack_varint($unscaledValue);
+        return $this->packInt($scale) . $this->packVarInt($unscaledValue);
     }
 
     /**
@@ -1120,20 +863,20 @@ class Cassandra
      *
      * @param string $content Content to unpack.
      *
-     * @return decimal Unpacked value.
-     * @access private
+     * @return float|int Unpacked value.
      */
-    private function unpack_decimal($content)
+    protected function unpackDecimal(string $content): float|int
     {
         // Based on http://docs.oracle.com/javase/7/docs/api/java/math/BigDecimal.html
 
         $len = strlen($content);
-        if ($len < 5)
+        if ($len < 5) {
             return 0;
+        }
 
         $data = unpack('N', $content);
         $scale = $data[1];
-        $unscaledValue = $this->unpack_varint(substr($content, 4));
+        $unscaledValue = $this->unpackVarInt(substr($content, 4));
 
         return $unscaledValue * pow(10, -$scale);
     }
@@ -1144,14 +887,14 @@ class Cassandra
      * @param double $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_double($value)
+    protected function packDouble(float $value): string
     {
         $littleEndian = pack('d', $value);
         $retval = '';
-        for ($i = 7; $i >= 0; $i--)
+        for ($i = 7; $i >= 0; $i--) {
             $retval .= $littleEndian[$i];
+        }
         return $retval;
     }
 
@@ -1161,13 +904,13 @@ class Cassandra
      * @param string $content Content to unpack.
      *
      * @return double Unpacked value.
-     * @access private
      */
-    private function unpack_double($content)
+    protected function unpackDouble(string $content): float
     {
         $bigEndian = '';
-        for ($i = 7; $i >= 0; $i--)
+        for ($i = 7; $i >= 0; $i--) {
             $bigEndian .= $content[$i];
+        }
 
         $value = unpack('d', $bigEndian);
         return $value[1];
@@ -1179,14 +922,14 @@ class Cassandra
      * @param float $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_float($value)
+    protected function packFloat(float $value): string
     {
         $littleEndian = pack('f', $value);
         $retval = '';
-        for ($i = 3; $i >= 0; $i--)
+        for ($i = 3; $i >= 0; $i--) {
             $retval .= $littleEndian[$i];
+        }
         return $retval;
     }
 
@@ -1196,13 +939,13 @@ class Cassandra
      * @param string $content Content to unpack.
      *
      * @return float Unpacked value.
-     * @access private
      */
-    private function unpack_float($content)
+    protected function unpackFloat(string $content): float
     {
         $bigEndian = '';
-        for ($i = 3; $i >= 0; $i--)
+        for ($i = 3; $i >= 0; $i--) {
             $bigEndian .= $content[$i];
+        }
 
         $value = unpack('f', $bigEndian);
         return $value[1];
@@ -1214,11 +957,10 @@ class Cassandra
      * @param int $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_int($value)
+    protected function packInt(int $value): string
     {
-        return $this->bin_from_int($value, 4, 1);
+        return $this->binFromInt($value, 4, 1);
     }
 
     /**
@@ -1227,11 +969,10 @@ class Cassandra
      * @param string $content Content to unpack.
      *
      * @return int Unpacked value.
-     * @access private
      */
-    private function unpack_int($content)
+    protected function unpackInt(string $content): int
     {
-        return $this->int_from_bin($content, 0, 4, 1);
+        return $this->intFromBin($content, 0, 4, 1);
     }
 
     /**
@@ -1240,9 +981,8 @@ class Cassandra
      * @param string $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_uuid($value)
+    protected function packUuid(string $value): string
     {
         return pack('H*', str_replace('-', '', $value));
     }
@@ -1252,10 +992,9 @@ class Cassandra
      *
      * @param string $content Content to unpack.
      *
-     * @return string Unpacked value.
-     * @access private
+     * @return ?string Unpacked value.
      */
-    private function unpack_uuid($content)
+    protected function unpackUuid(string $content): ?string
     {
         $value = unpack('H*', $content);
         if ($value[1]) {
@@ -1270,14 +1009,13 @@ class Cassandra
     /**
      * Packs a COLUMNTYPE_VARINT value to its binary form.
      *
-     * @param int $value Value to pack.
+     * @param int $content Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_varint($content)
+    protected function packVarInt(int $content): string
     {
-        return $this->bin_from_int($content, 0xFFFF, 1);
+        return $this->binFromInt($content, 0xFFFF, 1);
     }
 
     /**
@@ -1286,11 +1024,10 @@ class Cassandra
      * @param string $content Content to unpack.
      *
      * @return int Unpacked value.
-     * @access private
      */
-    private function unpack_varint($content)
+    protected function unpackVarInt(string $content): int
     {
-        return $this->int_from_bin($content, 0, strlen($content), 1);
+        return $this->intFromBin($content, 0, strlen($content), 1);
     }
 
     /**
@@ -1299,9 +1036,8 @@ class Cassandra
      * @param string $value Value to pack.
      *
      * @return string Binary form of the value.
-     * @access private
      */
-    private function pack_inet($value)
+    protected function packInet(string $value): string
     {
         return inet_pton($value);
     }
@@ -1312,9 +1048,8 @@ class Cassandra
      * @param string $content Content to unpack.
      *
      * @return int Unpacked value.
-     * @access private
      */
-    private function unpack_inet($content)
+    protected function unpackInet(string $content): int
     {
         return inet_ntop($content);
     }
@@ -1322,19 +1057,20 @@ class Cassandra
     /**
      * Packs a COLUMNTYPE_LIST value to its binary form.
      *
-     * @param array $value   Value to pack.
-     * @param int   $subtype Values' Column type.
+     * @param array $value Value to pack.
+     * @param int $subtype Values' Column type.
      *
      * @return string Binary form of the value.
-     * @access private
+     *
+     * @throws \InvalidArgumentException
      */
-    private function pack_list($value, $subtype)
+    protected function packList(array $value, int $subtype): string
     {
-        $retval = $this->pack_int(count($value));
+        $retval = $this->packInt(count($value));
 
         foreach ($value as $item) {
-            $itemPacked = $this->pack_value($item, $subtype);
-            $retval .= $this->pack_long_string($itemPacked);
+            $itemPacked = $this->packValue($item, $subtype);
+            $retval .= $this->packLongString($itemPacked);
         }
 
         return $retval;
@@ -1344,19 +1080,20 @@ class Cassandra
      * Unpacks a COLUMNTYPE_LIST value from its binary form.
      *
      * @param string $content Content to unpack.
-     * @param int    $subtype Values' Column type.
+     * @param int $subtype    Values' Column type.
      *
      * @return array Unpacked value.
-     * @access private
+     *
+     * @throws ProtocolException
      */
-    private function unpack_list($content, $subtype)
+    protected function unpackList(string $content, int $subtype): array
     {
         $contentOffset = 0;
-        $itemsCount = $this->pop_int($content, $contentOffset);
+        $itemsCount = $this->popInt($content, $contentOffset);
         $retval = [];
         for (; $itemsCount; $itemsCount--) {
-            $subcontent = $this->pop_long_string($content, $contentOffset);
-            $retval[] = $this->unpack_value($subcontent, $subtype);
+            $subcontent = $this->popLongString($content, $contentOffset);
+            $retval[] = $this->unpackValue($subcontent, $subtype);
         }
 
         return $retval;
@@ -1365,22 +1102,23 @@ class Cassandra
     /**
      * Packs a COLUMNTYPE_MAP value to its binary form.
      *
-     * @param array $value    Value to pack.
-     * @param int   $subtype1 Keys' column type.
-     * @param int   $subtype2 Values' column type.
+     * @param array $value  Value to pack.
+     * @param int $subtype1 Keys' column type.
+     * @param int $subtype2 Values' column type.
      *
      * @return string Binary form of the value.
-     * @access private
+     *
+     * @throws \InvalidArgumentException
      */
-    private function pack_map($value, $subtype1, $subtype2)
+    protected function packMap(array $value, int $subtype1, int $subtype2): string
     {
-        $retval = $this->pack_int(count($value));
+        $retval = $this->packInt(count($value));
 
         foreach ($value as $key => $item) {
-            $keyPacked = $this->pack_value($key, $subtype1);
-            $itemPacked = $this->pack_value($item, $subtype2);
-            $retval .= $this->pack_long_string($keyPacked) .
-                $this->pack_long_string($itemPacked);
+            $keyPacked = $this->packValue($key, $subtype1);
+            $itemPacked = $this->packValue($item, $subtype2);
+            $retval .= $this->packLongString($keyPacked) .
+                $this->packLongString($itemPacked);
         }
 
         return $retval;
@@ -1389,24 +1127,25 @@ class Cassandra
     /**
      * Unpacks a COLUMNTYPE_MAP value from its binary form.
      *
-     * @param string $content  Content to unpack.
-     * @param int    $subtype1 Keys' column type.
-     * @param int    $subtype2 Values' column type.
+     * @param string $content Content to unpack.
+     * @param int $subtype1   Keys' column type.
+     * @param int $subtype2   Values' column type.
      *
      * @return array Unpacked value.
-     * @access private
+     *
+     * @throws CassandraException
      */
-    private function unpack_map($content, $subtype1, $subtype2)
+    protected function unpackMap(string $content, int $subtype1, int $subtype2): array
     {
         $contentOffset = 0;
-        $itemsCount = $this->pop_int($content, $contentOffset);
+        $itemsCount = $this->popInt($content, $contentOffset);
         $retval = [];
         for (; $itemsCount; $itemsCount--) {
-            $subKeyRaw = $this->pop_long_string($content, $contentOffset);
-            $subValueRaw = $this->pop_long_string($content, $contentOffset);
+            $subKeyRaw = $this->popLongString($content, $contentOffset);
+            $subValueRaw = $this->popLongString($content, $contentOffset);
 
-            $subKey = $this->unpack_value($subKeyRaw, $subtype1);
-            $subValue = $this->unpack_value($subValueRaw, $subtype2);
+            $subKey = $this->unpackValue($subKeyRaw, $subtype1);
+            $subValue = $this->unpackValue($subValueRaw, $subtype2);
             $retval[$subKey] = $subValue;
         }
 
@@ -1417,24 +1156,21 @@ class Cassandra
      * Pops a [bytes] value from the body, starting from the offset, and
      * advancing it in the process.
      *
-     * @param string $body    Content's body.
-     * @param string &$offset Offset to start from.
+     * @param string $body Content's body.
+     * @param int &$offset Offset to start from.
      *
-     * @return string Bytes content.
-     * @access private
+     * @return ?string Bytes content.
      */
-    private function pop_bytes($body, &$offset)
+    protected function popBytes(string $body, int &$offset): ?string
     {
-        $string_length = $this->int_from_bin($body, $offset, 4, 0);
+        $stringLength = $this->intFromBin($body, $offset, 4, 0);
 
-        if ($string_length == 0xFFFFFFFF) {
-            $actual_length = 0;
-            $retval = NULL;
-        } else {
-            $actual_length = $string_length;
-            $retval = substr($body, $offset + 4, $actual_length);
-            $offset += $actual_length + 4;
+        if ($stringLength == 0xFFFFFFFF) {
+            return NULL;
         }
+
+        $retval = substr($body, $offset + 4, $stringLength);
+        $offset += $stringLength + 4;
 
         return $retval;
     }
@@ -1443,26 +1179,26 @@ class Cassandra
      * Pops a [string] value from the body, starting from the offset, and
      * advancing it in the process.
      *
-     * @param string $body    Content's body.
-     * @param string &$offset Offset to start from.
+     * @param string $body Content's body.
+     * @param int &$offset Offset to start from.
      *
-     * @return string String content.
-     * @access private
+     * @return ?string String content.
      */
-    private function pop_string($body, &$offset)
+    protected function popString(string $body, int &$offset): ?string
     {
         $len = substr($body, $offset, 2);
         if (strlen($len) < 2) {
-            myWarningHandler('POP error: ' . bin2hex($body) . ' - ' . $offset);
-            return NULL;
+            return null;
         }
-        $string_length = unpack('n', substr($body, $offset, 2));
-        if ($string_length[1] == 0xFFFF) {
+
+        $stringLength = unpack('n', substr($body, $offset, 2));
+        if ($stringLength[1] == 0xFFFF) {
             $offset += 2;
-            return NULL;
+            return null;
         }
-        $retval = substr($body, $offset + 2, $string_length[1]);
-        $offset += $string_length[1] + 2;
+
+        $retval = substr($body, $offset + 2, $stringLength[1]);
+        $offset += $stringLength[1] + 2;
         return $retval;
     }
 
@@ -1470,21 +1206,21 @@ class Cassandra
      * Pops a [long string] value from the body, starting from the offset, and
      * advancing it in the process.
      *
-     * @param string $body    Content's body.
-     * @param string &$offset Offset to start from.
+     * @param string $body Content's body.
+     * @param int &$offset Offset to start from.
      *
-     * @return string Long String content.
-     * @access private
+     * @return ?string Long String content.
      */
-    private function pop_long_string($body, &$offset)
+    protected function popLongString(string $body, int &$offset): ?string
     {
-        $string_length = unpack('N', substr($body, $offset, 4));
-        if ($string_length[1] == 0xFFFFFFFF) {
+        $stringLength = unpack('N', substr($body, $offset, 4));
+        if ($stringLength[1] == 0xFFFFFFFF) {
             $offset += 4;
-            return NULL;
+            return null;
         }
-        $retval = substr($body, $offset + 4, $string_length[1]);
-        $offset += $string_length[1] + 4;
+
+        $retval = substr($body, $offset + 4, $stringLength[1]);
+        $offset += $stringLength[1] + 4;
         return $retval;
     }
 
@@ -1492,15 +1228,14 @@ class Cassandra
      * Pops a [int] value from the body, starting from the offset, and
      * advancing it in the process.
      *
-     * @param string $body    Content's body.
-     * @param string &$offset Offset to start from.
+     * @param string $body Content's body.
+     * @param int &$offset Offset to start from.
      *
      * @return int Int content.
-     * @access private
      */
-    private function pop_int($body, &$offset)
+    protected function popInt(string $body, int &$offset): int
     {
-        $retval = $this->int_from_bin($body, $offset, 4, 1);
+        $retval = $this->intFromBin($body, $offset, 4, 1);
         $offset += 4;
         return $retval;
     }
@@ -1509,15 +1244,14 @@ class Cassandra
      * Pops a [short] value from the body, starting from the offset, and
      * advancing it in the process.
      *
-     * @param string $body    Content's body.
-     * @param string &$offset Offset to start from.
+     * @param string $body Content's body.
+     * @param int &$offset Offset to start from.
      *
-     * @return short Short content.
-     * @access private
+     * @return int Short content.
      */
-    private function pop_short($body, &$offset)
+    protected function popShort(string $body, int &$offset): int
     {
-        $retval = $this->int_from_bin($body, $offset, 2, 1);
+        $retval = $this->intFromBin($body, $offset, 2, 1);
         $offset += 2;
         return $retval;
     }
@@ -1525,21 +1259,19 @@ class Cassandra
     /**
      * Packs an outgoing frame.
      *
-     * @param int    $opcode   Frame's opcode.
-     * @param string $body     Frame's body.
-     * @param int    $response Frame's response flag.
-     * @param int    $stream   Frame's stream id.
+     * @param int $opcode   Frame's opcode.
+     * @param string $body  Frame's body.
+     * @param int $response Frame's response flag.
+     * @param int $stream   Frame's stream id.
      *
      * @return string Frame's content.
-     * @access private
      */
-    private function pack_frame($opcode, $body = '', $response = 0, $stream = 0)
+    protected function packFrame(int $opcode, string $body = '', int $response = 0, int $stream = 0): string
     {
         $version = ($response << 0x07) | self::PROTOCOL_VERSION;
         $flags = 0;
-        $opcode = $opcode;
 
-        $frame = pack(
+        return pack(
             'CCnCNa*',
             $version,
             $flags,
@@ -1548,19 +1280,16 @@ class Cassandra
             strlen($body),
             $body
         );
-
-        return $frame;
     }
 
     /**
      * Packs a [long string] notation (section 3)
      *
-     * @param int $data String content.
+     * @param string $data String content.
      *
      * @return string Data content.
-     * @access public
      */
-    public function pack_long_string($data)
+    protected function packLongString(string $data): string
     {
         return pack('Na*', strlen($data), $data);
     }
@@ -1568,12 +1297,11 @@ class Cassandra
     /**
      * Packs a [string] notation (section 3)
      *
-     * @param int $data String content.
+     * @param string $data String content.
      *
      * @return string Data content.
-     * @access public
      */
-    public function pack_string($data)
+    protected function packString(string $data): string
     {
         return pack('na*', strlen($data), $data);
     }
@@ -1584,9 +1312,8 @@ class Cassandra
      * @param int $data Short content.
      *
      * @return string Data content.
-     * @access public
      */
-    public function pack_short($data)
+    protected function packShort(int $data): string
     {
         return chr($data >> 0x08) . chr($data & 0xFF);
     }
@@ -1594,12 +1321,11 @@ class Cassandra
     /**
      * Packs a [short] notation (missing from specs)
      *
-     * @param char $data Byte content.
+     * @param int $data Byte content.
      *
      * @return string Data content.
-     * @access public
      */
-    public function pack_byte($data)
+    protected function packByte(int $data): string
     {
         return chr($data);
     }
@@ -1610,46 +1336,48 @@ class Cassandra
      * @param array $dataArr Associative array of the map.
      *
      * @return string Data content.
-     * @access public
      */
-    public function pack_string_map($dataArr)
+    protected function packStringMap(array $dataArr): string
     {
         $retval = pack('n', count($dataArr));
-        foreach ($dataArr as $key => $value)
-            $retval .= $this->pack_string($key) . $this->pack_string($value);
+        foreach ($dataArr as $key => $value) {
+            $retval .= $this->packString($key) . $this->packString($value);
+        }
         return $retval;
     }
 
     /**
      * Converts binary format to a varint.
      *
-     * @param string  $data   Binary content.
-     * @param int     $offset Starting data offset.
-     * @param int     $length Data length.
-     * @param boolean $signed Whether the returned data can be signed.
+     * @param string $data Binary content.
+     * @param int $offset  Starting data offset.
+     * @param int $length  Data length.
+     * @param bool $signed Whether the returned data can be signed.
      *
      * @return int Parsed varint.
-     * @access private
      */
-    private function int_from_bin($data, $offset, $length, $signed = false)
+    protected function intFromBin(string $data, int $offset, int $length, bool $signed = false): int
     {
         $len = strlen($data);
 
-        if ((!$length) || ($offset >= $len))
+        if ((!$length) || ($offset >= $len)) {
             return 0;
+        }
 
         $signed = $signed && (ord($data[$offset]) & 0x80);
 
         $value = 0;
         for ($i = 0; $i < $length; $i++) {
             $v = ord($data[$i + $offset]);
-            if ($signed)
+            if ($signed) {
                 $v ^= 0xFF;
+            }
             $value = $value * 256 + $v;
         }
 
-        if ($signed)
-            $value = - ($value + 1);
+        if ($signed) {
+            $value = -($value + 1);
+        }
 
         return $value;
     }
@@ -1657,30 +1385,31 @@ class Cassandra
     /**
      * Converts varint to its binary format.
      *
-     * @param int     $value  Binary content.
-     * @param int     $offset Starting data offset.
-     * @param int     $length Data length.
-     * @param boolean $signed Whether the returned data can be signed.
+     * @param int $value   Binary content.
+     * @param int $length  Data length.
+     * @param bool $signed Whether the returned data can be signed.
      *
-     * @return String Binary content.
-     * @access private
+     * @return string Binary content.
      */
-    private function bin_from_int($value, $length, $signed = false)
+    protected function binFromInt(int $value, int $length, bool $signed = false): string
     {
         $negative = (($signed) && ($value < 0));
-        if ($negative)
-            $value = - ($value + 1);
+        if ($negative) {
+            $value = -($value + 1);
+        }
 
         $retval = '';
         for ($i = 0; $i < $length; $i++) {
             $v = $value % 256;
-            if ($negative)
+            if ($negative) {
                 $v ^= 0xFF;
+            }
             $retval = chr($v) . $retval;
             $value = floor($value / 256);
 
-            if (($length == 0xFFFF) && ($value == 0))
+            if (($length == 0xFFFF) && ($value == 0)) {
                 break;
+            }
         }
 
         return $retval;

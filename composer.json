@@ -1,7 +1,10 @@
 {
-    "name": "uri2x/php-cql",
+    "name": "intermaterium/php-cql",
     "description": "A native Apache Cassandra and ScyllaDB connector for PHP based on the CQL binary protocol with support for persistent connections",
     "license": "MIT",
+    "require": {
+        "php": ">=8.0"
+    },
     "autoload": {
         "psr-4": {
             "CassandraNative\\": "src/"
@@ -11,6 +14,10 @@
         {
             "name": "Uri Hartmann",
             "homepage": "https://www.humancodes.org/projects/php-cql"
+        },
+        {
+            "name": "Christopher Birmingham",
+            "email": "chris.birmingham@hotmail.co.uk"
         }
     ]
 }
