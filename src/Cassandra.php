@@ -33,6 +33,7 @@ use CassandraNative\Statement\StatementInterface;
  * The MIT License (MIT)
  *
  * Copyright (c) 2023 Uri Hartmann
+ * Copyright (c) 2024 Christopher Birmingham
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -63,71 +64,71 @@ use CassandraNative\Statement\StatementInterface;
 
 class Cassandra
 {
-    const CONSISTENCY_ANY          = 0x0000;
-    const CONSISTENCY_ONE          = 0x0001;
-    const CONSISTENCY_TWO          = 0x0002;
-    const CONSISTENCY_THREE        = 0x0003;
-    const CONSISTENCY_QUORUM       = 0x0004;
-    const CONSISTENCY_ALL          = 0x0005;
-    const CONSISTENCY_LOCAL_QUORUM = 0x0006;
-    const CONSISTENCY_EACH_QUORUM  = 0x0007;
-    const CONSISTENCY_LOCAL_ONE    = 0x000A;
+    public const CONSISTENCY_ANY          = 0x0000;
+    public const CONSISTENCY_ONE          = 0x0001;
+    public const CONSISTENCY_TWO          = 0x0002;
+    public const CONSISTENCY_THREE        = 0x0003;
+    public const CONSISTENCY_QUORUM       = 0x0004;
+    public const CONSISTENCY_ALL          = 0x0005;
+    public const CONSISTENCY_LOCAL_QUORUM = 0x0006;
+    public const CONSISTENCY_EACH_QUORUM  = 0x0007;
+    public const CONSISTENCY_LOCAL_ONE    = 0x000A;
 
-    const COLUMNTYPE_CUSTOM    = 0x0000;
-    const COLUMNTYPE_ASCII     = 0x0001;
-    const COLUMNTYPE_BIGINT    = 0x0002;
-    const COLUMNTYPE_BLOB      = 0x0003;
-    const COLUMNTYPE_BOOLEAN   = 0x0004;
-    const COLUMNTYPE_COUNTER   = 0x0005;
-    const COLUMNTYPE_DECIMAL   = 0x0006;
-    const COLUMNTYPE_DOUBLE    = 0x0007;
-    const COLUMNTYPE_FLOAT     = 0x0008;
-    const COLUMNTYPE_INT       = 0x0009;
-    const COLUMNTYPE_TEXT      = 0x000A;
-    const COLUMNTYPE_TIMESTAMP = 0x000B;
-    const COLUMNTYPE_UUID      = 0x000C;
-    const COLUMNTYPE_VARCHAR   = 0x000D;
-    const COLUMNTYPE_VARINT    = 0x000E;
-    const COLUMNTYPE_TIMEUUID  = 0x000F;
-    const COLUMNTYPE_INET      = 0x0010;
-    const COLUMNTYPE_LIST      = 0x0020;
-    const COLUMNTYPE_MAP       = 0x0021;
-    const COLUMNTYPE_SET       = 0x0022;
+    public const COLUMNTYPE_CUSTOM    = 0x0000;
+    public const COLUMNTYPE_ASCII     = 0x0001;
+    public const COLUMNTYPE_BIGINT    = 0x0002;
+    public const COLUMNTYPE_BLOB      = 0x0003;
+    public const COLUMNTYPE_BOOLEAN   = 0x0004;
+    public const COLUMNTYPE_COUNTER   = 0x0005;
+    public const COLUMNTYPE_DECIMAL   = 0x0006;
+    public const COLUMNTYPE_DOUBLE    = 0x0007;
+    public const COLUMNTYPE_FLOAT     = 0x0008;
+    public const COLUMNTYPE_INT       = 0x0009;
+    public const COLUMNTYPE_TEXT      = 0x000A;
+    public const COLUMNTYPE_TIMESTAMP = 0x000B;
+    public const COLUMNTYPE_UUID      = 0x000C;
+    public const COLUMNTYPE_VARCHAR   = 0x000D;
+    public const COLUMNTYPE_VARINT    = 0x000E;
+    public const COLUMNTYPE_TIMEUUID  = 0x000F;
+    public const COLUMNTYPE_INET      = 0x0010;
+    public const COLUMNTYPE_LIST      = 0x0020;
+    public const COLUMNTYPE_MAP       = 0x0021;
+    public const COLUMNTYPE_SET       = 0x0022;
 
-    const OPCODE_ERROR          = 0x00;
-    const OPCODE_STARTUP        = 0x01;
-    const OPCODE_READY          = 0x02;
-    const OPCODE_AUTHENTICATE   = 0x03;
-    const OPCODE_CREDENTIALS    = 0x04;
-    const OPCODE_OPTIONS        = 0x05;
-    const OPCODE_SUPPORTED      = 0x06;
-    const OPCODE_QUERY          = 0x07;
-    const OPCODE_RESULT         = 0x08;
-    const OPCODE_PREPARE        = 0x09;
-    const OPCODE_EXECUTE        = 0x0A;
-    const OPCODE_REGISTER       = 0x0B;
-    const OPCODE_EVENT          = 0x0C;
-    const OPCODE_BATCH          = 0x0D;
-    const OPCODE_AUTH_CHALLENGE = 0x0E;
-    const OPCODE_AUTH_RESPONSE  = 0x0F;
-    const OPCODE_AUTH_SUCCESS   = 0x10;
+    protected const OPCODE_ERROR          = 0x00;
+    protected const OPCODE_STARTUP        = 0x01;
+    protected const OPCODE_READY          = 0x02;
+    protected const OPCODE_AUTHENTICATE   = 0x03;
+    protected const OPCODE_CREDENTIALS    = 0x04;
+    protected const OPCODE_OPTIONS        = 0x05;
+    protected const OPCODE_SUPPORTED      = 0x06;
+    protected const OPCODE_QUERY          = 0x07;
+    protected const OPCODE_RESULT         = 0x08;
+    protected const OPCODE_PREPARE        = 0x09;
+    protected const OPCODE_EXECUTE        = 0x0A;
+    protected const OPCODE_REGISTER       = 0x0B;
+    protected const OPCODE_EVENT          = 0x0C;
+    protected const OPCODE_BATCH          = 0x0D;
+    protected const OPCODE_AUTH_CHALLENGE = 0x0E;
+    protected const OPCODE_AUTH_RESPONSE  = 0x0F;
+    protected const OPCODE_AUTH_SUCCESS   = 0x10;
 
-    const BATCH_LOGGED          = 0x00;
-    const BATCH_UNLOGGED        = 0x01;
-    const BATCH_COUNTER         = 0x02;
+    public const BATCH_LOGGED   = 0x00;
+    public const BATCH_UNLOGGED = 0x01;
+    public const BATCH_COUNTER  = 0x02;
 
-    const RESULT_KIND_VOID          = 0x001;
-    const RESULT_KIND_ROWS          = 0x002;
-    const RESULT_KIND_SET_KEYSPACE  = 0x003;
-    const RESULT_KIND_PREPARED      = 0x004;
-    const RESULT_KIND_SCHEMA_CHANGE = 0x005;
+    protected const RESULT_KIND_VOID          = 0x001;
+    protected const RESULT_KIND_ROWS          = 0x002;
+    protected const RESULT_KIND_SET_KEYSPACE  = 0x003;
+    protected const RESULT_KIND_PREPARED      = 0x004;
+    protected const RESULT_KIND_SCHEMA_CHANGE = 0x005;
 
-    const FLAG_COMPRESSION    = 0x01;
-    const FLAG_TRACING        = 0x02;
-    const FLAG_CUSTOM_PAYLOAD = 0x04;
-    const FLAG_WARNING        = 0x08;
+    protected const FLAG_COMPRESSION    = 0x01;
+    protected const FLAG_TRACING        = 0x02;
+    protected const FLAG_CUSTOM_PAYLOAD = 0x04;
+    protected const FLAG_WARNING        = 0x08;
 
-    const PROTOCOL_VERSION  = 4;
+    protected const PROTOCOL_VERSION  = 4;
 
     protected Socket $socket;
 
@@ -449,7 +450,8 @@ class Cassandra
             $iPos = 0;
             $warningCount = $this->popShort($body, $iPos);
             for ($i = 0; $i < $warningCount; $i++) {
-                $value = $this->popString($body, $iPos);
+                $warning = $this->popString($body, $iPos);
+                trigger_error('Warning returned while processing Cassandra query: ' . $warning, E_USER_WARNING);
             }
 
             $body = substr($body, $iPos);

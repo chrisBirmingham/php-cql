@@ -1,4 +1,5 @@
-# uri2x/php-cql
+# PHP CQL
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Native [Apache Cassandra](https://cassandra.apache.org) and [ScyllaDB](https://www.scylladb.com) connector for PHP based on the CQL binary protocol (v4),
@@ -6,15 +7,12 @@ without the need for an external extension.
 
 Requires [PHP](https://www.php.net/) version >=8, Cassandra >1.2, and any ScyllaDB version.
 
-Much of the API is built to emulate the Datastax's API.
+Much of the API is built to emulate the [Datastax PHP Driver](https://docs.datastax.com/en/developer/php-driver/1.3/index.html). Original work by Uri Hartmann
 
 ## Installation
 
-Either:
-
-* Via [Composer](https://getcomposer.org/):
 ```bash
-$ composer require uri2x/php-cql
+$ composer require intermaterium/php-cql
 ```
 
 ## Usage
@@ -124,6 +122,7 @@ https://cassandra.apache.org/_/native_protocol.html
     The MIT License (MIT)
 
     Copyright (c) 2023 Uri Hartmann
+    Copyright (c) 2024 Christopher Birmingham
 
     Permission is hereby granted, free of charge, to any person obtaining a
     copy of this software and associated documentation files (the "Software"),
