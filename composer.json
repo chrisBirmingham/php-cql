@@ -6,7 +6,8 @@
         "php": ">=8.0"
     },
     "suggest": {
-        "ext-snappy": "Required for enabling compressed communication between Cassandra"
+        "ext-lz4": "Required for enabling compression between Cassandra. Preferred over ext-snappy",
+        "ext-snappy": "Required for enabling compression between Cassandra"
     },
     "autoload": {
         "psr-4": {
