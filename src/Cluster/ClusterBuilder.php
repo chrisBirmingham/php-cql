@@ -3,6 +3,7 @@
 namespace CassandraNative\Cluster;
 
 use CassandraNative\Cassandra;
+use CassandraNative\Compression\SnappyCompressor;
 use CassandraNative\SSL\SSLOptions;
 
 class ClusterBuilder
@@ -27,6 +28,8 @@ class ClusterBuilder
     protected int $port = 9042;
 
     protected bool $persistent = false;
+
+    protected bool $useCompression = false;
 
     /**
      * Sets the default consistency for all queries to the cluster. Default is CONSISTENCY_ONE
@@ -79,7 +82,7 @@ class ClusterBuilder
 
     /**
      * Sets the plaintext credentials for authenticating the connection to the cluster
-     * Default no authentication
+     * Default to no authentication
      *
      * @param string $username
      * @param string $password
@@ -94,6 +97,7 @@ class ClusterBuilder
 
     /**
      * Sets timeout for connecting to the Cluster
+     * Default 30 seconds
      *
      * @param float $timeout
      * @return $this
@@ -106,6 +110,7 @@ class ClusterBuilder
 
     /**
      * Sets the timeout for requests to the cluster
+     * Default 30 seconds
      *
      * @param float $timeout
      * @return $this
@@ -117,7 +122,7 @@ class ClusterBuilder
     }
 
     /**
-     *  Sets SSL connection settings built via the SSLBuilder object
+     * Sets SSL connection settings built via the SSLBuilder object
      * Default is unencrypted
      *
      * @param SSLOptions $ssl
@@ -130,14 +135,28 @@ class ClusterBuilder
     }
 
     /**
-     * Sets whether the connection to the cluster should be persistent or not
+     * Sets whether the connection to the cluster should be persistent or not.
+     * Default is no persistent connections
      *
-     * @param bool $enabled Default is false
+     * @param bool $enabled
      * @return $this
      */
     public function withPersistentSessions(bool $enabled): static
     {
         $this->persistent = $enabled;
+        return $this;
+    }
+
+    /**
+     * Sets whether the communication to the cluster should be compressed
+     * Default is no compression
+     *
+     * @param bool $enabled
+     * @return $this
+     */
+    public function withCompression(bool $enabled): static
+    {
+        $this->useCompression = $enabled;
         return $this;
     }
 
@@ -149,6 +168,16 @@ class ClusterBuilder
      */
     public function build(): Cassandra
     {
+        $compressor = null;
+        if ($this->useCompression) {
+            $extensions = get_loaded_extensions();
+            if (!in_array('snappy', $extensions)) {
+                throw new \Exception('Compression enabled but snappy extension is not available');
+            }
+
+            $compressor = new SnappyCompressor();
+        }
+
         $options = new ClusterOptions(
             $this->consistency,
             $this->hosts,
@@ -158,7 +187,8 @@ class ClusterBuilder
             $this->requestTimeout,
             $this->ssl,
             $this->port,
-            $this->persistent
+            $this->persistent,
+            $compressor
         );
 
         return new Cassandra($options);

@@ -5,6 +5,9 @@
     "require": {
         "php": ">=8.0"
     },
+    "suggest": {
+        "ext-snappy": "Required for enabling compressed communication between Cassandra"
+    },
     "autoload": {
         "psr-4": {
             "CassandraNative\\": "src/"

@@ -7,6 +7,7 @@
 namespace CassandraNative;
 
 use CassandraNative\Cluster\ClusterOptions;
+use CassandraNative\Compression\CompressorInterface;
 use CassandraNative\Connection\Socket;
 use CassandraNative\Exception\AuthenticationException;
 use CassandraNative\Exception\CassandraException;
@@ -136,6 +137,8 @@ class Cassandra
 
     protected int $defaultConsistency;
 
+    protected ?CompressorInterface $compressor;
+
     /**
      * @param ClusterOptions $options
      * @throws CassandraException
@@ -144,6 +147,7 @@ class Cassandra
     {
         $this->socket = new Socket();
         $this->defaultConsistency = $options->getDefaultConsistency();
+        $this->compressor = $options->getCompressor();
         $this->establishConnection($options);
     }
 
@@ -164,8 +168,14 @@ class Cassandra
             return;
         }
 
+        $startBody = ['CQL_VERSION' => '3.0.0'];
+
+        if ($this->compressor instanceof CompressorInterface) {
+            $startBody['COMPRESSION'] = $this->compressor->getName();
+        }
+
         // Writes a STARTUP frame
-        $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
+        $frameBody = $this->packStringMap($startBody);
         $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
 
         // Reads incoming frame - should be immediate do we don't
@@ -445,6 +455,10 @@ class Cassandra
         $opcode = ord($header[4]);
 
         $this->fullFrame = $header . $body;
+
+        if ($flags & self::FLAG_COMPRESSION) {
+            $body = $this->compressor->uncompress($body);
+        }
 
         if ($flags & self::FLAG_WARNING) {
             $iPos = 0;
@@ -1084,7 +1098,7 @@ class Cassandra
      *
      * @return array Unpacked value.
      *
-     * @throws ProtocolException
+     * @throws CassandraException
      */
     protected function unpackList(string $content, int $subtype): array
     {
@@ -1270,6 +1284,12 @@ class Cassandra
     {
         $version = ($response << 0x07) | self::PROTOCOL_VERSION;
         $flags = 0;
+
+        // STARTUP Messages can never be compressed
+        if ($opcode != self::OPCODE_STARTUP && $this->compressor instanceof CompressorInterface) {
+            $flags |= self::FLAG_COMPRESSION;
+            $body = $this->compressor->compress($body);
+        }
 
         return pack(
             'CCnCNa*',

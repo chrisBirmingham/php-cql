@@ -2,6 +2,7 @@
 
 namespace CassandraNative\Cluster;
 
+use CassandraNative\Compression\CompressorInterface;
 use CassandraNative\SSL\SSLOptions;
 
 class ClusterOptions
@@ -27,6 +28,8 @@ class ClusterOptions
 
     protected bool $persistent;
 
+    protected ?CompressorInterface $compressor;
+
     /**
      * @param int $consistency
      * @param string[] $hosts
@@ -37,6 +40,7 @@ class ClusterOptions
      * @param ?SSLOptions $ssl
      * @param int $port
      * @param bool $persistent
+     * @param ?CompressorInterface $compressor
      */
     public function __construct(
         int $consistency,
@@ -47,7 +51,8 @@ class ClusterOptions
         float $requestTimeout,
         ?SSLOptions $ssl, 
         int $port,
-        bool $persistent 
+        bool $persistent,
+        ?CompressorInterface $compressor
     ) {
         $this->consistency = $consistency;
         $this->hosts = $hosts;
@@ -58,6 +63,7 @@ class ClusterOptions
         $this->ssl = $ssl;
         $this->port = $port;
         $this->persistent = $persistent;
+        $this->compressor = $compressor;
     }
 
     /**
@@ -130,5 +136,13 @@ class ClusterOptions
     public function getPersistentSessions(): bool
     {
         return $this->persistent;
+    }
+
+    /**
+     * @return ?CompressorInterface
+     */
+    public function getCompressor(): ?CompressorInterface
+    {
+        return $this->compressor;
     }
 }
