@@ -4,7 +4,6 @@ namespace CassandraNative\Compression;
 
 class SnappyCompressor implements CompressorInterface
 {
-
     /**
      * @inheritDoc
      */

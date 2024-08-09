@@ -3,6 +3,7 @@
 namespace CassandraNative\Cluster;
 
 use CassandraNative\Cassandra;
+use CassandraNative\Compression\Lz4Compressor;
 use CassandraNative\Compression\SnappyCompressor;
 use CassandraNative\SSL\SSLOptions;
 
@@ -149,6 +150,7 @@ class ClusterBuilder
 
     /**
      * Sets whether the communication to the cluster should be compressed
+     * If enabled, the driver will prefer LZ4 over snappy if both are available
      * Default is no compression
      *
      * @param bool $enabled
@@ -171,11 +173,14 @@ class ClusterBuilder
         $compressor = null;
         if ($this->useCompression) {
             $extensions = get_loaded_extensions();
-            if (!in_array('snappy', $extensions)) {
-                throw new \Exception('Compression enabled but snappy extension is not available');
+            if (in_array('lz4', $extensions)) {
+                $compressor = new Lz4Compressor();
+            } elseif (in_array('snappy', $extensions)) {
+                $compressor = new SnappyCompressor();
+            } else {
+                throw new \Exception('Compression enabled but lz4 and snappy extensions are not available');
             }
 
-            $compressor = new SnappyCompressor();
         }
 
         $options = new ClusterOptions(
