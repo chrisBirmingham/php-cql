@@ -497,7 +497,7 @@ class Cassandra
     {
         // Read the 9 bytes header
         $header = $this->socket->read(9);
-        $length = $this->intFromBin($header, 5, 4, 0);
+        $length = $this->intFromBin($header, 5, 4);
 
         // Read frame body, if exists
         $body = '';
@@ -786,7 +786,7 @@ class Cassandra
      */
     protected function packBigint(int $value): string
     {
-        return $this->binFromInt($value, 8, 1);
+        return $this->binFromInt($value, 8, true);
     }
 
     /**
@@ -798,7 +798,7 @@ class Cassandra
      */
     protected function unpackBigint(string $content): int
     {
-        return $this->intFromBin($content, 0, 8, 1);
+        return $this->intFromBin($content, 0, 8, true);
     }
 
     /**
@@ -974,7 +974,7 @@ class Cassandra
      */
     protected function packInt(int $value): string
     {
-        return $this->binFromInt($value, 4, 1);
+        return $this->binFromInt($value, 4, true);
     }
 
     /**
@@ -986,7 +986,7 @@ class Cassandra
      */
     protected function unpackInt(string $content): int
     {
-        return $this->intFromBin($content, 0, 4, 1);
+        return $this->intFromBin($content, 0, 4, true);
     }
 
     /**
@@ -1029,7 +1029,7 @@ class Cassandra
      */
     protected function packVarInt(int $content): string
     {
-        return $this->binFromInt($content, 0xFFFF, 1);
+        return $this->binFromInt($content, 0xFFFF, true);
     }
 
     /**
@@ -1041,7 +1041,7 @@ class Cassandra
      */
     protected function unpackVarInt(string $content): int
     {
-        return $this->intFromBin($content, 0, strlen($content), 1);
+        return $this->intFromBin($content, 0, strlen($content), true);
     }
 
     /**
@@ -1177,7 +1177,7 @@ class Cassandra
      */
     protected function popBytes(string $body, int &$offset): ?string
     {
-        $stringLength = $this->intFromBin($body, $offset, 4, 0);
+        $stringLength = $this->intFromBin($body, $offset, 4);
 
         if ($stringLength == 0xFFFFFFFF) {
             return NULL;
@@ -1249,7 +1249,7 @@ class Cassandra
      */
     protected function popInt(string $body, int &$offset): int
     {
-        $retval = $this->intFromBin($body, $offset, 4, 1);
+        $retval = $this->intFromBin($body, $offset, 4, true);
         $offset += 4;
         return $retval;
     }
@@ -1265,7 +1265,7 @@ class Cassandra
      */
     protected function popShort(string $body, int &$offset): int
     {
-        $retval = $this->intFromBin($body, $offset, 2, 1);
+        $retval = $this->intFromBin($body, $offset, 2, true);
         $offset += 2;
         return $retval;
     }

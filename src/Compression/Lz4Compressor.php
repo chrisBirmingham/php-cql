@@ -2,7 +2,7 @@
 
 namespace CassandraNative\Compression;
 
-class SnappyCompressor implements CompressorInterface
+class Lz4Compressor implements CompressorInterface
 {
 
     /**
@@ -10,7 +10,7 @@ class SnappyCompressor implements CompressorInterface
      */
     public function getName(): string
     {
-        return 'snappy';
+        return 'lz4';
     }
 
     /**
@@ -18,7 +18,7 @@ class SnappyCompressor implements CompressorInterface
      */
     public function compress(string $data): string
     {
-        return snappy_compress($data);
+        // TODO: Implement compress() method.
     }
 
     /**
@@ -26,6 +26,6 @@ class SnappyCompressor implements CompressorInterface
      */
     public function uncompress(string $data): string
     {
-        return snappy_uncompress($data);
+        // TODO: Implement uncompress() method.
     }
 }
