@@ -7,9 +7,11 @@
 namespace CassandraNative;
 
 use CassandraNative\Cluster\ClusterOptions;
+use CassandraNative\Compression\CompressorInterface;
 use CassandraNative\Connection\Socket;
 use CassandraNative\Exception\AuthenticationException;
 use CassandraNative\Exception\CassandraException;
+use CassandraNative\Exception\CompressionException;
 use CassandraNative\Exception\ProtocolException;
 use CassandraNative\Exception\QueryException;
 use CassandraNative\Exception\ServerException;
@@ -136,6 +138,8 @@ class Cassandra
 
     protected int $defaultConsistency;
 
+    protected ?CompressorInterface $compressor;
+
     /**
      * @param ClusterOptions $options
      * @throws CassandraException
@@ -144,6 +148,7 @@ class Cassandra
     {
         $this->socket = new Socket();
         $this->defaultConsistency = $options->getDefaultConsistency();
+        $this->compressor = $options->getCompressor();
         $this->establishConnection($options);
     }
 
@@ -164,8 +169,14 @@ class Cassandra
             return;
         }
 
+        $startBody = ['CQL_VERSION' => '3.0.0'];
+
+        if ($this->compressor instanceof CompressorInterface) {
+            $startBody['COMPRESSION'] = $this->compressor->getName();
+        }
+
         // Writes a STARTUP frame
-        $frameBody = $this->packStringMap(['CQL_VERSION' => '4.0.0']);
+        $frameBody = $this->packStringMap($startBody);
         $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
 
         // Reads incoming frame - should be immediate do we don't
@@ -446,6 +457,12 @@ class Cassandra
 
         $this->fullFrame = $header . $body;
 
+        if ($flags & self::FLAG_COMPRESSION) {
+            if (($body = $this->compressor->uncompress($body)) === false) {
+                throw new CompressionException('Could not uncompress response from Cassandra');
+            }
+        }
+
         if ($flags & self::FLAG_WARNING) {
             $iPos = 0;
             $warningCount = $this->popShort($body, $iPos);
@@ -483,7 +500,7 @@ class Cassandra
     {
         // Read the 9 bytes header
         $header = $this->socket->read(9);
-        $length = $this->intFromBin($header, 5, 4, 0);
+        $length = $this->intFromBin($header, 5, 4);
 
         // Read frame body, if exists
         $body = '';
@@ -772,7 +789,7 @@ class Cassandra
      */
     protected function packBigint(int $value): string
     {
-        return $this->binFromInt($value, 8, 1);
+        return $this->binFromInt($value, 8, true);
     }
 
     /**
@@ -784,7 +801,7 @@ class Cassandra
      */
     protected function unpackBigint(string $content): int
     {
-        return $this->intFromBin($content, 0, 8, 1);
+        return $this->intFromBin($content, 0, 8, true);
     }
 
     /**
@@ -960,7 +977,7 @@ class Cassandra
      */
     protected function packInt(int $value): string
     {
-        return $this->binFromInt($value, 4, 1);
+        return $this->binFromInt($value, 4, true);
     }
 
     /**
@@ -972,7 +989,7 @@ class Cassandra
      */
     protected function unpackInt(string $content): int
     {
-        return $this->intFromBin($content, 0, 4, 1);
+        return $this->intFromBin($content, 0, 4, true);
     }
 
     /**
@@ -1015,7 +1032,7 @@ class Cassandra
      */
     protected function packVarInt(int $content): string
     {
-        return $this->binFromInt($content, 0xFFFF, 1);
+        return $this->binFromInt($content, 0xFFFF, true);
     }
 
     /**
@@ -1027,7 +1044,7 @@ class Cassandra
      */
     protected function unpackVarInt(string $content): int
     {
-        return $this->intFromBin($content, 0, strlen($content), 1);
+        return $this->intFromBin($content, 0, strlen($content), true);
     }
 
     /**
@@ -1084,7 +1101,7 @@ class Cassandra
      *
      * @return array Unpacked value.
      *
-     * @throws ProtocolException
+     * @throws CassandraException
      */
     protected function unpackList(string $content, int $subtype): array
     {
@@ -1163,7 +1180,7 @@ class Cassandra
      */
     protected function popBytes(string $body, int &$offset): ?string
     {
-        $stringLength = $this->intFromBin($body, $offset, 4, 0);
+        $stringLength = $this->intFromBin($body, $offset, 4);
 
         if ($stringLength == 0xFFFFFFFF) {
             return NULL;
@@ -1235,7 +1252,7 @@ class Cassandra
      */
     protected function popInt(string $body, int &$offset): int
     {
-        $retval = $this->intFromBin($body, $offset, 4, 1);
+        $retval = $this->intFromBin($body, $offset, 4, true);
         $offset += 4;
         return $retval;
     }
@@ -1251,7 +1268,7 @@ class Cassandra
      */
     protected function popShort(string $body, int &$offset): int
     {
-        $retval = $this->intFromBin($body, $offset, 2, 1);
+        $retval = $this->intFromBin($body, $offset, 2, true);
         $offset += 2;
         return $retval;
     }
@@ -1265,11 +1282,21 @@ class Cassandra
      * @param int $stream   Frame's stream id.
      *
      * @return string Frame's content.
+     *
+     * @throws CassandraException
      */
     protected function packFrame(int $opcode, string $body = '', int $response = 0, int $stream = 0): string
     {
         $version = ($response << 0x07) | self::PROTOCOL_VERSION;
         $flags = 0;
+
+        // STARTUP Messages can never be compressed
+        if ($opcode != self::OPCODE_STARTUP && $this->compressor instanceof CompressorInterface) {
+            $flags |= self::FLAG_COMPRESSION;
+            if (($body = $this->compressor->compress($body)) === false) {
+                throw new CompressionException('Could not compress request to send to Cassandra');
+            }
+        }
 
         return pack(
             'CCnCNa*',
