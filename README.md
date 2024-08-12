@@ -16,7 +16,7 @@ Original work by Uri Hartmann
 ## Installation
 
 ```bash
-$ composer require intermaterium/php-cql
+$ composer require intermaterium/cassandra-native
 ```
 
 ## Features
@@ -142,7 +142,7 @@ statement
 
 Prepared Statements are created via the `prepare` method.
 
-```
+```php
 $stmt = $cassandra->prepare('UPDATE my_table SET col2=?,col3=? WHERE col1=?');
 $values = ['col2' => 5, 'col3' => '0x55', 'col1' => 'five'];
 $rows = $cassandra->execute($stmt, $values);

@@ -1,7 +1,13 @@
 {
-    "name": "intermaterium/php-cql",
+    "name": "intermaterium/cassandra-native",
     "description": "A native Apache Cassandra and ScyllaDB connector for PHP based on the CQL binary protocol with support for persistent connections",
     "license": "MIT",
+    "type": "library",
+    "keywords": [
+        "cassandra",
+        "database",
+        "cql"
+    ],
     "require": {
         "php": ">=8.0"
     },

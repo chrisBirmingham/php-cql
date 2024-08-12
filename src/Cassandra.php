@@ -11,6 +11,7 @@ use CassandraNative\Compression\CompressorInterface;
 use CassandraNative\Connection\Socket;
 use CassandraNative\Exception\AuthenticationException;
 use CassandraNative\Exception\CassandraException;
+use CassandraNative\Exception\CompressionException;
 use CassandraNative\Exception\ProtocolException;
 use CassandraNative\Exception\QueryException;
 use CassandraNative\Exception\ServerException;
@@ -457,7 +458,9 @@ class Cassandra
         $this->fullFrame = $header . $body;
 
         if ($flags & self::FLAG_COMPRESSION) {
-            $body = $this->compressor->uncompress($body);
+            if (($body = $this->compressor->uncompress($body)) === false) {
+                throw new CompressionException('Could not uncompress response from Cassandra');
+            }
         }
 
         if ($flags & self::FLAG_WARNING) {
@@ -1279,6 +1282,8 @@ class Cassandra
      * @param int $stream   Frame's stream id.
      *
      * @return string Frame's content.
+     *
+     * @throws CassandraException
      */
     protected function packFrame(int $opcode, string $body = '', int $response = 0, int $stream = 0): string
     {
@@ -1288,7 +1293,9 @@ class Cassandra
         // STARTUP Messages can never be compressed
         if ($opcode != self::OPCODE_STARTUP && $this->compressor instanceof CompressorInterface) {
             $flags |= self::FLAG_COMPRESSION;
-            $body = $this->compressor->compress($body);
+            if (($body = $this->compressor->compress($body)) === false) {
+                throw new CompressionException('Could not compress request to send to Cassandra');
+            }
         }
 
         return pack(

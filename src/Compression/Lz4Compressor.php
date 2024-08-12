@@ -2,6 +2,8 @@
 
 namespace CassandraNative\Compression;
 
+use CassandraNative\Exception\CompressionException;
+
 class Lz4Compressor implements CompressorInterface
 {
     /**
@@ -15,20 +17,24 @@ class Lz4Compressor implements CompressorInterface
     /**
      * @inheritDoc
      */
-    public function compress(string $data): string
+    public function compress(string $data): string|false
     {
         // The first four characters of an LZ4 compressed body are the original data's length in little endian format.
         // This format is invalid for Cassandra which requires the first four characters to be in big endian.
         // We have to replace the header with our own one
         $len = strlen($data);
-        $data = lz4_compress($data);
+
+        if (($data = lz4_compress($data)) === false) {
+            return false;
+        }
+
         return pack('N', $len) . substr($data, 4);
     }
 
     /**
      * @inheritDoc
      */
-    public function uncompress(string $data): string
+    public function uncompress(string $data): string|false
     {
         // Cassandra responds with the first four characters in big endian. Like with compression we have to get the
         // header and convert it into little endian for PHP LZ4 to process
@@ -39,6 +45,7 @@ class Lz4Compressor implements CompressorInterface
             return '';
         }
 
-        return lz4_uncompress(pack('V', $header[1]) . substr($data, 4));
+        $data = pack('V', $header[1]) . substr($data, 4);
+        return lz4_uncompress($data);
     }
 }
