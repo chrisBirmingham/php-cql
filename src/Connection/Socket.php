@@ -64,7 +64,13 @@ class Socket
             }
         }
 
-        stream_set_timeout($stream, $clusterOptions->getRequestTimeout());
+        $requestTimeout = $clusterOptions->getRequestTimeout();
+
+        if ($requestTimeout > 0) {
+            $timeoutSeconds = floor($requestTimeout);
+            $timeoutMicroseconds = ($requestTimeout - $timeoutSeconds) * 1000000;
+            stream_set_timeout($stream, $timeoutSeconds, $timeoutMicroseconds);
+        }
 
         $this->stream = $stream;
     }

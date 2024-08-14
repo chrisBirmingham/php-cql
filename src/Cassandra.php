@@ -304,6 +304,10 @@ class Cassandra
             $this->packShort(count($values));
 
         foreach ($stmt->getColumns() as $key => $column) {
+            if (!isset($values[$key])) {
+                throw new QueryException('Missing value for bound parameter ' . $key);
+            }
+
             $value = $values[$key];
 
             $data = $this->packValue(
