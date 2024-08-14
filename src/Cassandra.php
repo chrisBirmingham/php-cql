@@ -355,7 +355,7 @@ class Cassandra
                     $values_data .= $this->packString($key);
                 }
 
-                $data = $this->packValue($value[0], $value[1], 0, 0);
+                $data = $this->packValue($value[0], $value[1]);
 
                 $values_data .= $this->packLongString($data);
             }
