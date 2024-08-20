@@ -60,6 +60,7 @@ class Socket
 
         if ($sslOptions instanceof SSLOptions) {
             if (!stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                fclose($stream);
                 throw new ConnectionException('Failed to establish encrypted connection with host ' . $host);
             }
         }

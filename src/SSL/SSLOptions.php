@@ -43,7 +43,8 @@ class SSLOptions
     public function get(): array
     {
         $options = [
-            'verify_peer' => $this->verify
+            'verify_peer' => $this->verify,
+            'verify_peer_name' => $this->verify
         ];
 
         if ($this->trustedCerts) {
