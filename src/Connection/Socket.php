@@ -59,9 +59,14 @@ class Socket
         }
 
         if ($sslOptions instanceof SSLOptions) {
-            if (!stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-                fclose($stream);
-                throw new ConnectionException('Failed to establish encrypted connection with host ' . $host);
+            // Persistent connections retain SSL. Check that we already have an SSL enabled connection before trying to
+            // enable one
+            $meta = stream_get_meta_data($stream);
+            if (!isset($meta['crypto'])) {
+                if (!stream_socket_enable_crypto($stream, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+                    fclose($stream);
+                    throw new ConnectionException('Failed to establish encrypted connection to ' . $host . ':' . $port);
+                }
             }
         }
 

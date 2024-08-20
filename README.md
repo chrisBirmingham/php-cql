@@ -2,15 +2,16 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Native [Apache Cassandra](https://cassandra.apache.org) and 
+Native [Apache Cassandra](https://cassandra.apache.org) and
 [ScyllaDB](https://www.scylladb.com) connector for PHP applications
 using the CQL binary protocol (v4), without the need for an external
 extension.
 
-Requires [PHP](https://www.php.net/) version >=8, Cassandra >1.2, 
+Requires [PHP](https://www.php.net/) version >=8, Cassandra >1.2,
 and any ScyllaDB version.
 
-Much of the API is built to emulate the [Datastax PHP Driver](https://docs.datastax.com/en/developer/php-driver/1.3/index.html). 
+Much of the API is built to emulate
+the [Datastax PHP Driver](https://docs.datastax.com/en/developer/php-driver/1.3/index.html).
 Original work by Uri Hartmann
 
 ## Installation
@@ -31,21 +32,22 @@ $ composer require intermaterium/cassandra-native
 * Batch Statements
 * Async queries
 * Result Paging
+* Tuples and User Defined Types
 
 ## Usage
 
 ### Cluster
 
 A Cassandra cluster can be built via the `ClusterBuilder` class.
+By default the Cluster will try to connect to localhost.
 
 ```php
 $clusterBuilder = new \CassandraNative\Cluster\ClusterBuilder();
 $cassandra = $clusterBuilder->build();
 ```
 
-By default the Cluster will try to connect to localhost.
-You can specify a set of IP/hostnames to connect to using the 
-`withContactPoints` method. Unlike the Datastax Driver, when 
+You can specify a set of IP/hostnames to connect to using the
+`withContactPoints` method. Unlike the Datastax Driver, when
 connecting the client will pick a contact host at random and attempt
 to connect to it.
 
@@ -55,17 +57,17 @@ $clusterBuilder->withContactPoints(['1.0.0.0', '2.0.0.0']);
 $cassandra = $clusterBuilder->build();
 ```
 
-When connecting, the created Cassandra instance doesn't connect to 
-a specific keyspace. Calling `connect` on the created Cassandra 
+When connecting, the created Cassandra instance doesn't connect to
+a specific keyspace. Calling `connect` on the created Cassandra
 instance with a keyspace name will execute a `USE $keyspace` query.
 
 ```php
 $cassandra->connect('system');
 ```
 
-### SSL 
+### SSL
 
-You can turn on SSL Encryption via the `SSLBuilder` class and 
+You can turn on SSL Encryption via the `SSLBuilder` class and
 pass the result of a call to the `build` method to the `withSSL`
 method of a cluster builder instance.
 
@@ -89,20 +91,21 @@ $clusterBuilder->withCompression(true);
 ```
 
 The client will check to see if either the snappy or LZ4 extensions
-are installed and picks the one that is available. If both are 
-available it will pick LZ4 over Snappy. If neither are avilable
-the builder will throw an exception when you try to build the 
+are installed and picks the one that is available. If both are
+available it will pick LZ4 over Snappy. If neither are available
+the builder will throw an exception when you try to build the
 cluster.
 
 ### Statements
 
-The client currently only supports two types of statements, simple
-and prepared. Call statements are executed via the `execute` method
-which accepts the statment, an optional array of bound values and 
-an optional consistency level which overrides the default.
+The client currently only supports two types of statements, `Simple`
+and `Prepared`. Both types of statement are executed via the `execute` method
+on the `Cassandra` instance. The execute method accepts the statement, an optional
+array of values to bind to parameters and an optional consistency level which
+overrides the default consistency.
 
-The `execute` method returns a `Rows` class which acts like an 
-array and can be interated over.
+The `execute` method returns a `Rows` class which implements the `ArrayAccess` and
+`Iterator` interfaces.
 
 #### Simple Statements
 
@@ -135,12 +138,11 @@ $rows = $cassandra->execute(
 );
 ```
 
-You must specify the bound parameters type when using a simple 
-statement
+You must specify the bound parameters type when using a simple statement
 
 #### Prepared Statements
 
-Prepared Statements are created via the `prepare` method.
+Prepared Statements are created via the `prepare` method on the `Cassandra` instance.
 
 ```php
 $stmt = $cassandra->prepare('UPDATE my_table SET col2=?,col3=? WHERE col1=?');
@@ -148,17 +150,15 @@ $values = ['col2' => 5, 'col3' => '0x55', 'col1' => 'five'];
 $rows = $cassandra->execute($stmt, $values);
 ```
 
-Unlike Simple Statements, you don't need to specify the bound values
-type.
+Unlike Simple Statements, you don't need to specify the bound values type.
 
 ## External links
 
 1. Datastax's blog introducing the binary protocol:
-http://www.datastax.com/dev/blog/binary-protocol
+   http://www.datastax.com/dev/blog/binary-protocol
 
 2. CQL definitions
-https://cassandra.apache.org/_/native_protocol.html
-
+   https://cassandra.apache.org/_/native_protocol.html
 
 ## License
 
