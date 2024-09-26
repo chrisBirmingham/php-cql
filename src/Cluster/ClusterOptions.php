@@ -2,6 +2,7 @@
 
 namespace CassandraNative\Cluster;
 
+use CassandraNative\Auth\AuthProviderInterface;
 use CassandraNative\Compression\CompressorInterface;
 use CassandraNative\SSL\SSLOptions;
 
@@ -14,9 +15,7 @@ class ClusterOptions
      */
     protected array $hosts;
 
-    protected ?string $username;
-
-    protected ?string $password;
+    protected ?AuthProviderInterface $authProvider;
 
     protected float $connectTimeout;
 
@@ -33,8 +32,7 @@ class ClusterOptions
     /**
      * @param int $consistency
      * @param string[] $hosts
-     * @param ?string $username
-     * @param ?string $password
+     * @param ?AuthProviderInterface $authProvider
      * @param float $connectTimeout
      * @param float $requestTimeout
      * @param ?SSLOptions $ssl
@@ -45,8 +43,7 @@ class ClusterOptions
     public function __construct(
         int $consistency,
         array $hosts,
-        ?string $username,
-        #[\SensitiveParameter] ?string $password,
+        ?AuthProviderInterface $authProvider,
         float $connectTimeout,
         float $requestTimeout,
         ?SSLOptions $ssl, 
@@ -56,8 +53,7 @@ class ClusterOptions
     ) {
         $this->consistency = $consistency;
         $this->hosts = $hosts;
-        $this->username = $username;
-        $this->password = $password;
+        $this->authProvider = $authProvider;
         $this->connectTimeout = $connectTimeout;
         $this->requestTimeout = $requestTimeout;
         $this->ssl = $ssl;
@@ -83,19 +79,11 @@ class ClusterOptions
     }
 
     /**
-     * @return ?string
+     * @return ?AuthProviderInterface
      */
-    public function getUsername(): ?string
+    public function getAuthProvider(): ?AuthProviderInterface
     {
-        return $this->username;
-    }
-
-    /**
-     * @return ?string
-     */
-    public function getPassword(): ?string
-    {
-        return $this->password;
+        return $this->authProvider;
     }
 
     /**

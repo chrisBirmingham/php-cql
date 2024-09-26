@@ -26,6 +26,7 @@ $ composer require intermaterium/cassandra-native
 * SSL Encryption
 * Persistent Connections
 * Compression via LZ4 and Snappy.
+* Authentication
 
 ## Missing Features
 
@@ -95,6 +96,51 @@ are installed and picks the one that is available. If both are
 available it will pick LZ4 over Snappy. If neither are available
 the builder will throw an exception when you try to build the
 cluster.
+
+### Authentication
+
+Authentication can be enabled by providing an Authentication Provider object to the 
+cluster build via the `withCredentials` method. These . Provided with this library comes
+is the `PasswordAuthenticator` provider which accepts a plaintext username and password.
+
+```php
+$authProvider = new \CassandraNative\Auth\PasswordAuthenticator('cassandra', 'cassandra');
+$clusterBuilder->withCredentials($authProvider);
+```
+
+For other SASL based authentication methods you'll need to provide/use your own implementation.
+This can be done by creating a class which implements the `AuthProviderInterface`.
+
+```php
+<?php 
+
+class KeberosProvider implements \CassandraNative\Auth\AuthProviderInterface
+{
+    public function mechanism(): string
+    {
+        return 'java class name';
+    }    
+
+    public function initialResponse(): string
+    {
+        return 'i am an initial response';
+    }
+    
+    public function challengeResponse(string $token): string|false 
+    {
+        return 'i am a challenge response';
+    }
+}
+```
+
+The `mechanism` method returns the fully qualified name of the java class cassandra is configured
+to use. This name can be found in the `authenticator.class_name` directive of the cassandra.yaml config.
+
+The `initialResponse` method is called as soon as the first auth challenge is issued. Some auth providers
+will only require sending this response.
+
+The `challengeResponse` method is called on subsequent auth challenges. The `token` parameter contains the
+binary representation sent back from the Cassandra node of the information needed to complete the challenge.
 
 ### Statements
 

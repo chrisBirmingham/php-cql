@@ -2,6 +2,7 @@
 
 namespace CassandraNative\Cluster;
 
+use CassandraNative\Auth\AuthProviderInterface;
 use CassandraNative\Cassandra;
 use CassandraNative\Compression\Lz4Compressor;
 use CassandraNative\Compression\SnappyCompressor;
@@ -16,9 +17,7 @@ class ClusterBuilder
      */
     protected array $hosts = ['localhost'];
 
-    protected ?string $username = null;
-
-    protected ?string $password = null;
+    protected ?AuthProviderInterface $authProvider = null;
 
     protected float $connectTimeout = 30;
 
@@ -85,14 +84,12 @@ class ClusterBuilder
      * Sets the plaintext credentials for authenticating the connection to the cluster
      * Default to no authentication
      *
-     * @param string $username
-     * @param string $password
+     * @param AuthProviderInterface $authProvider
      * @return $this
      */
-    public function withCredentials(string $username, #[\SensitiveParameter] string $password): static
+    public function withCredentials(AuthProviderInterface $authProvider): static
     {
-        $this->username = $username;
-        $this->password = $password;
+        $this->authProvider = $authProvider;
         return $this;
     }
 
@@ -186,8 +183,7 @@ class ClusterBuilder
         $options = new ClusterOptions(
             $this->consistency,
             $this->hosts,
-            $this->username,
-            $this->password,
+            $this->authProvider,
             $this->connectTimeout,
             $this->requestTimeout,
             $this->ssl,

@@ -6,12 +6,14 @@
 
 namespace CassandraNative;
 
+use CassandraNative\Auth\AuthProviderInterface;
 use CassandraNative\Cluster\ClusterOptions;
 use CassandraNative\Compression\CompressorInterface;
 use CassandraNative\Connection\Socket;
 use CassandraNative\Exception\AuthenticationException;
 use CassandraNative\Exception\CassandraException;
 use CassandraNative\Exception\CompressionException;
+use CassandraNative\Exception\ConnectionException;
 use CassandraNative\Exception\ProtocolException;
 use CassandraNative\Exception\QueryException;
 use CassandraNative\Exception\ServerException;
@@ -101,7 +103,6 @@ class Cassandra
     protected const OPCODE_STARTUP        = 0x01;
     protected const OPCODE_READY          = 0x02;
     protected const OPCODE_AUTHENTICATE   = 0x03;
-    protected const OPCODE_CREDENTIALS    = 0x04;
     protected const OPCODE_OPTIONS        = 0x05;
     protected const OPCODE_SUPPORTED      = 0x06;
     protected const OPCODE_QUERY          = 0x07;
@@ -130,7 +131,26 @@ class Cassandra
     protected const FLAG_CUSTOM_PAYLOAD = 0x04;
     protected const FLAG_WARNING        = 0x08;
 
-    protected const PROTOCOL_VERSION  = 4;
+    protected const SERVER_ERROR           = 0x0000;
+    protected const PROTOCOL_ERROR         = 0x000A;
+    protected const AUTHENTICATION_ERROR   = 0x0100;
+    protected const UNAVAILABLE_ERROR      = 0x1000;
+    protected const OVERLOADED_ERROR       = 0x1001;
+    protected const IS_BOOTSTRAPPING_ERROR = 0x1002;
+    protected const TRUNCATE_ERROR         = 0x1003;
+    protected const WRITE_TIMEOUT_ERROR    = 0x1100;
+    protected const READ_TIMEOUT_ERROR     = 0x1200;
+    protected const READ_FAILURE_ERROR     = 0x1300;
+    protected const FUNCTION_FAILURE_ERROR = 0x1400;
+    protected const WRITE_FAILURE_ERROR    = 0x1500;
+    protected const SYNTAX_ERROR           = 0x2000;
+    protected const UNAUTHORIZED_ERROR     = 0x2100;
+    protected const INVALID_ERROR          = 0x2200;
+    protected const CONFIG_ERROR           = 0x2300;
+    protected const ALREADY_EXISTS_ERROR   = 0x2400;
+    protected const UNPREPARED_ERROR       = 0x2500;
+
+    protected const PROTOCOL_VERSION = 4;
 
     protected Socket $socket;
 
@@ -169,6 +189,78 @@ class Cassandra
             return;
         }
 
+        // If we're planning to use compression for the connection send an OPTIONS request to see if the cassandra
+        // cluster supports it
+        if ($this->compressor instanceof CompressorInterface) {
+            $optionsMap = $this->sendOptionsFrame();
+            $this->checkCompatibility($optionsMap);
+        }
+
+        $this->sendStartupFrame($clusterOptions);
+    }
+
+    /**
+     * Sends an OPTIONS frame to the connected cassandra node and validates the response
+     *
+     * @return array The returned options map
+     *
+     * @throws CassandraException
+     */
+    protected function sendOptionsFrame(): array
+    {
+        $this->writeFrame(self::OPCODE_OPTIONS);
+        return $this->supportedResult();
+    }
+
+    /**
+     * Retrieves a SUPPORTED frame from the cassandra node and checks if
+     *
+     * @return array The returned options map
+     *
+     * @throws CassandraException
+     */
+    protected function supportedResult(): array
+    {
+        $frame = $this->readFrame();
+        $opcode = $frame['opcode'];
+
+        if ($opcode != self::OPCODE_SUPPORTED) {
+            throw new ProtocolException('Missing SUPPORTED packet. Got ' . $opcode . ' instead', $opcode);
+        }
+
+        $body = $frame['body'];
+        return $this->unpackMultimap($body);
+    }
+
+    /**
+     * Checks if the client and the connected cassandra node support the same options
+     *
+     * @param array $optionsMap The options map to check
+     *
+     * @throws CassandraException
+     */
+    protected function checkCompatibility(array $optionsMap): void
+    {
+
+        print_r($optionsMap);
+        $compressorName = $this->compressor->getName();
+        $supportedCompressors = $optionsMap['COMPRESSION'] ?? [];
+
+        if (!in_array($compressorName, $supportedCompressors)) {
+            $message = empty($supportedCompressors) ? 'uncompressed communication' : implode(', ', $supportedCompressors);
+            throw new ProtocolException(
+                'Client configured to use ' . $compressorName . ' compression but cassandra cluster supports only supports ' . $message
+            );
+        }
+    }
+
+    /**
+     * Sends a STARTUP frame to the cassandra node.
+     *
+     * @throws CassandraException
+     */
+    protected function sendStartupFrame(ClusterOptions $clusterOptions): void
+    {
         $startBody = ['CQL_VERSION' => '3.0.0'];
 
         if ($this->compressor instanceof CompressorInterface) {
@@ -179,30 +271,85 @@ class Cassandra
         $frameBody = $this->packStringMap($startBody);
         $this->writeFrame(self::OPCODE_STARTUP, $frameBody);
 
-        // Reads incoming frame - should be immediate do we don't
+        $this->startupResult($clusterOptions);
+    }
+
+    /**
+     * Retrieves the result of a STARTUP request
+     *
+     * @param ClusterOptions $clusterOptions
+     *
+     * @throws CassandraException
+     */
+    protected function startupResult(ClusterOptions $clusterOptions): void
+    {
+        $authProvider = $clusterOptions->getAuthProvider();
         $frame = $this->readFrame();
         $opcode = $frame['opcode'];
+        $body = $frame['body'];
 
-        // Checks if an AUTHENTICATE frame was received
-        if ($opcode == self::OPCODE_AUTHENTICATE) {
-            // Writes a CREDENTIALS frame
-            $body =
-                $this->packShort(2) .
-                $this->packString('username') .
-                $this->packString($clusterOptions->getUsername()) .
-                $this->packString('password') .
-                $this->packString($clusterOptions->getPassword());
-            $this->writeFrame(self::OPCODE_CREDENTIALS, $body);
+        switch ($opcode) {
+            case self::OPCODE_READY:
+                if ($authProvider instanceof AuthProviderInterface) {
+                    throw new ConnectionException("Client is configured with an auth provider but Cassandra didn't issue an auth challenge");
+                }
+                break;
+            case self::OPCODE_AUTHENTICATE:
+                $offset = 0;
+                $this->handleAuth($this->popString($body, $offset), $authProvider);
+                break;
+            default:
+                throw new ProtocolException('Missing READY packet. Got ' . $opcode . ' instead', $opcode);
+        }
+    }
 
-            // Reads incoming frame
+    /**
+     * Respond to an authentication challenge issued by the cassandra node
+     *
+     * @param string $authMechanism
+     * @param ?AuthProviderInterface $authProvider
+     *
+     * @throws CassandraException
+     */
+    protected function handleAuth(string $authMechanism, ?AuthProviderInterface $authProvider): void
+    {
+        if (!($authProvider instanceof AuthProviderInterface)) {
+            throw new AuthenticationException('Cassandra sent an auth challenge but an Authentication provider was not provided');
+        }
+
+        if ($authProvider->mechanism() !== $authMechanism) {
+            throw new AuthenticationException("Cassandra sent back an auth challenge for $authMechanism which doesn't match the one the client is configured for");
+        }
+
+        $authResponseBody = $authProvider->initialResponse();
+        $authResponseBody = $this->packLongString($authResponseBody);
+        $this->writeFrame(self::OPCODE_AUTH_RESPONSE, $authResponseBody);
+
+        $frame = $this->readFrame();
+        $opcode = $frame['opcode'];
+        $body = $frame['body'];
+
+        if ($opcode == self::OPCODE_AUTH_SUCCESS) {
+            // The initial auth response can send back a success without a challenge
+            return;
+        }
+
+        do {
+            if (($authChallengeResponseBody = $authProvider->challengeResponse($body)) === false) {
+                throw new AuthenticationException("Cassandra issued a challenge response but provider doesn't support challenges");
+            }
+
+            $authChallengeResponseBody = $this->packLongString($authChallengeResponseBody);
+            $this->writeFrame(self::OPCODE_AUTH_RESPONSE, $authChallengeResponseBody);
             $frame = $this->readFrame();
-            $opcode = $frame['opcode'];
-        }
 
-        // Checks if a READY frame was received
-        if ($opcode != self::OPCODE_READY) {
-            throw new ProtocolException('Missing READY packet. Got ' . $opcode . ' instead', $opcode);
-        }
+            $opcode = $frame['opcode'];
+            $body = $frame['body'];
+
+            if ($opcode == self::OPCODE_AUTH_SUCCESS) {
+                break;
+            }
+        } while ($opcode == self::OPCODE_AUTH_CHALLENGE);
     }
 
     /**
@@ -346,23 +493,23 @@ class Cassandra
         // TODO: Support the new <flags> byte
         $frame = $this->packLongString($stmt->getStatement()) . $this->packShort($consistency);
         if (count($values)) {
-            $values_data = '';
+            $valuesData = '';
             $namedParameters = false;
             foreach ($values as $key => $value) {
                 $namedParameters = $namedParameters || is_string($key);
 
                 if ($namedParameters) {
-                    $values_data .= $this->packString($key);
+                    $valuesData .= $this->packString($key);
                 }
 
                 $data = $this->packValue($value[0], $value[1]);
 
-                $values_data .= $this->packLongString($data);
+                $valuesData .= $this->packLongString($data);
             }
 
             $frame .= $this->packByte(0x01 | ($namedParameters ? 0x40 : 0x00)) .
                 $this->packShort(count($values)) .
-                $values_data;
+                $valuesData;
         } else {
             $frame .= $this->packByte(0x00);
         }
@@ -409,7 +556,7 @@ class Cassandra
      *
      * @throws CassandraException
      */
-    protected function writeFrame(int $opcode, string $body, int $response = 0, int $stream = 0): void
+    protected function writeFrame(int $opcode, string $body = '', int $response = 0, int $stream = 0): void
     {
         // Prepares the outgoing packet
         $frame = $this->packFrame($opcode, $body, $response, $stream);
@@ -429,12 +576,12 @@ class Cassandra
     protected function convertCassandraErrorToException(int $errorCode, string $errorMessage): void
     {
         $exception = match ($errorCode) {
-            0x0000, 0x1001, 0x1002, 0x1003 => ServerException::class,
-            0x000A => ProtocolException::class,
-            0x0100 => AuthenticationException::class,
-            0x1100, 0x1200 => TimeoutException::class,
-            0x1300, 0x1400, 0x1500, 0x2000, 0x2200, 0x2300, 0x2400, 0x2500 => QueryException::class,
-            0x2100 => UnauthorizedException::class
+            self::SERVER_ERROR, self::OVERLOADED_ERROR, self::UNAVAILABLE_ERROR, self::IS_BOOTSTRAPPING_ERROR, self::TRUNCATE_ERROR => ServerException::class,
+            self::PROTOCOL_ERROR => ProtocolException::class,
+            self::AUTHENTICATION_ERROR => AuthenticationException::class,
+            self::WRITE_TIMEOUT_ERROR, self::READ_TIMEOUT_ERROR => TimeoutException::class,
+            self::READ_FAILURE_ERROR, self::FUNCTION_FAILURE_ERROR, self::WRITE_FAILURE_ERROR, self::SYNTAX_ERROR, self::INVALID_ERROR, self::CONFIG_ERROR, self::ALREADY_EXISTS_ERROR, self::UNPREPARED_ERROR => QueryException::class,
+            self::UNAUTHORIZED_ERROR => UnauthorizedException::class
         };
 
         throw new $exception($errorMessage, $errorCode);
@@ -555,14 +702,18 @@ class Cassandra
                     ];
                 }
 
-                return ['id' => $id, 'columns' => $columns];
+                return [
+                    'id' => $id,
+                    'columns' => $columns
+                ];
             case self::RESULT_KIND_SCHEMA_CHANGE:
                 // <string change><string keyspace><string table>
                 $change = $this->popString($body, $bodyOffset);
                 $target = $this->popString($body, $bodyOffset);
                 $options = $this->popString($body, $bodyOffset);
                 return [[
-                    'change' => $change, 'target' => $target,
+                    'change' => $change,
+                    'target' => $target,
                     'options' => $options
                 ]];
         }
@@ -582,65 +733,63 @@ class Cassandra
     protected function parseRowsMetadata(string $body, int &$bodyOffset, bool $readPk = false): array
     {
         $flags = $this->popInt($body, $bodyOffset);
-        $columns_count = $this->popInt($body, $bodyOffset);
+        $columnsCount = $this->popInt($body, $bodyOffset);
 
         if ($readPk) {
-            $pk_count = $this->popInt($body, $bodyOffset);
+            $pkCount = $this->popInt($body, $bodyOffset);
 
-            for ($i = 0; $i < $pk_count; $i++) {
+            for ($i = 0; $i < $pkCount; $i++) {
                 $this->popShort($body, $bodyOffset);
             }
         }
 
-        $global_table_spec = ($flags & 0x0001);
-        if ($global_table_spec) {
+        $globalTableSpec = ($flags & 0x0001);
+        if ($globalTableSpec) {
             $keyspace = $this->popString($body, $bodyOffset);
             $table = $this->popString($body, $bodyOffset);
         }
 
         $columns = [];
 
-        for ($i = 0; $i < $columns_count; $i++) {
-            if (!$global_table_spec) {
+        for ($i = 0; $i < $columnsCount; $i++) {
+            if (!$globalTableSpec) {
                 $keyspace = $this->popString($body, $bodyOffset);
                 $table = $this->popString($body, $bodyOffset);
             }
 
-            $column_name = $this->popString($body, $bodyOffset);
-            $column_type = $this->popShort($body, $bodyOffset);
-            if ($column_type == self::COLUMNTYPE_CUSTOM) {
-                $column_type = $this->popString($body, $bodyOffset);
-                $column_subtype1 = 0;
-                $column_subtype2 = 0;
-            } elseif (($column_type == self::COLUMNTYPE_LIST) ||
-                ($column_type == self::COLUMNTYPE_SET)
-            ) {
-                $column_subtype1 = $this->popShort($body, $bodyOffset);
-                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM) {
-                    $column_subtype1 = $this->popString($body, $bodyOffset);
+            $columnName = $this->popString($body, $bodyOffset);
+            $columnType = $this->popShort($body, $bodyOffset);
+            if ($columnType == self::COLUMNTYPE_CUSTOM) {
+                $columnType = $this->popString($body, $bodyOffset);
+                $columnSubType1 = 0;
+                $columnSubType2 = 0;
+            } elseif (($columnType == self::COLUMNTYPE_LIST) || ($columnType == self::COLUMNTYPE_SET)) {
+                $columnSubType1 = $this->popShort($body, $bodyOffset);
+                if ($columnSubType1 == self::COLUMNTYPE_CUSTOM) {
+                    $columnSubType1 = $this->popString($body, $bodyOffset);
                 }
-                $column_subtype2 = 0;
-            } elseif ($column_type == self::COLUMNTYPE_MAP) {
-                $column_subtype1 = $this->popShort($body, $bodyOffset);
-                if ($column_subtype1 == self::COLUMNTYPE_CUSTOM) {
-                    $column_subtype1 = $this->popString($body, $bodyOffset);
+                $columnSubType2 = 0;
+            } elseif ($columnType == self::COLUMNTYPE_MAP) {
+                $columnSubType1 = $this->popShort($body, $bodyOffset);
+                if ($columnSubType1 == self::COLUMNTYPE_CUSTOM) {
+                    $columnSubType1 = $this->popString($body, $bodyOffset);
                 }
 
-                $column_subtype2 = $this->popShort($body, $bodyOffset);
-                if ($column_subtype2 == self::COLUMNTYPE_CUSTOM) {
-                    $column_subtype2 = $this->popString($body, $bodyOffset);
+                $columnSubType2 = $this->popShort($body, $bodyOffset);
+                if ($columnSubType2 == self::COLUMNTYPE_CUSTOM) {
+                    $columnSubType2 = $this->popString($body, $bodyOffset);
                 }
             } else {
-                $column_subtype1 = 0;
-                $column_subtype2 = 0;
+                $columnSubType1 = 0;
+                $columnSubType2 = 0;
             }
             $columns[] = [
                 'keyspace' => $keyspace,
                 'table' => $table,
-                'name' => $column_name,
-                'type' => $column_type,
-                'subtype1' => $column_subtype1,
-                'subtype2' => $column_subtype2
+                'name' => $columnName,
+                'type' => $columnType,
+                'subtype1' => $columnSubType1,
+                'subtype2' => $columnSubType2
             ];
         }
         return $columns;
@@ -1174,6 +1323,31 @@ class Cassandra
     }
 
     /**
+     * @param string $content
+     * @return array
+     */
+    protected function unpackMultimap(string $content): array
+    {
+        $currentOffset = 0;
+        $itemsCount = $this->popShort($content, $currentOffset);
+
+        $retval = [];
+        for (; $itemsCount; $itemsCount--) {
+            $subKey = $this->popString($content, $currentOffset);
+            $subValueCount = $this->popShort($content, $currentOffset);
+            $subValues = [];
+
+            for (; $subValueCount; $subValueCount--) {
+                $subValues[] = $this->popString($content, $currentOffset);
+            }
+
+            $retval[$subKey] = $subValues;
+        }
+
+        return $retval;
+    }
+
+    /**
      * Pops a [bytes] value from the body, starting from the offset, and
      * advancing it in the process.
      *
@@ -1294,8 +1468,9 @@ class Cassandra
         $version = ($response << 0x07) | self::PROTOCOL_VERSION;
         $flags = 0;
 
-        // STARTUP Messages can never be compressed
-        if ($opcode != self::OPCODE_STARTUP && $this->compressor instanceof CompressorInterface) {
+        // STARTUP and OPTION Messages cannot be compressed
+        $invalidOpcodes = [self::OPCODE_STARTUP, self::OPCODE_OPTIONS];
+        if (!in_array($opcode, $invalidOpcodes) && $this->compressor instanceof CompressorInterface) {
             $flags |= self::FLAG_COMPRESSION;
             if (($body = $this->compressor->compress($body)) === false) {
                 throw new CompressionException('Could not compress request to send to Cassandra');
