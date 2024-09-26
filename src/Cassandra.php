@@ -14,12 +14,14 @@ use CassandraNative\Exception\AuthenticationException;
 use CassandraNative\Exception\CassandraException;
 use CassandraNative\Exception\CompressionException;
 use CassandraNative\Exception\ConnectionException;
+use CassandraNative\Exception\NoHostsAvailableException;
 use CassandraNative\Exception\ProtocolException;
 use CassandraNative\Exception\QueryException;
 use CassandraNative\Exception\ServerException;
 use CassandraNative\Exception\TimeoutException;
 use CassandraNative\Exception\UnauthorizedException;
 use CassandraNative\Result\Rows;
+use CassandraNative\SSL\SSLOptions;
 use CassandraNative\Statement\PreparedStatement;
 use CassandraNative\Statement\SimpleStatement;
 use CassandraNative\Statement\StatementInterface;
@@ -182,7 +184,37 @@ class Cassandra
      */
     protected function establishConnection(ClusterOptions $clusterOptions): void
     {
-        $this->socket->connect($clusterOptions);
+        $hosts = $clusterOptions->getHosts();
+
+        do {
+            $index = array_rand($hosts);
+            $host = $hosts[$index];
+            $hosts = array_slice($hosts, $index, 1);
+
+            try {
+                $this->socket->connect(
+                    $host,
+                    $clusterOptions->getPort(),
+                    $clusterOptions->getPersistentSessions(),
+                    $clusterOptions->getConnectTimeout()
+                );
+
+                break;
+            } catch (ConnectionException $e) {
+                trigger_error($e->getMessage(), E_USER_WARNING);
+            }
+        } while (!empty($hosts));
+
+        if (empty($hosts)) {
+            throw new NoHostsAvailableException('Failed to connect to all hosts in Cassandra cluster');
+        }
+
+        $sslOptions = $clusterOptions->getSSL();
+        if ($sslOptions instanceof SSLOptions) {
+            $this->socket->enableSSL($sslOptions->get());
+        }
+
+        $this->socket->setTimeout($clusterOptions->getRequestTimeout());
 
         // Don't send startup & authentication if we're using a persistent connection
         if ($this->socket->isPersistent()) {
@@ -241,8 +273,6 @@ class Cassandra
      */
     protected function checkCompatibility(array $optionsMap): void
     {
-
-        print_r($optionsMap);
         $compressorName = $this->compressor->getName();
         $supportedCompressors = $optionsMap['COMPRESSION'] ?? [];
 
