@@ -6,6 +6,7 @@
 
 namespace CassandraNative;
 
+use CassandraNative\Auth\AuthChallengeProviderInterface;
 use CassandraNative\Auth\AuthProviderInterface;
 use CassandraNative\Cluster\ClusterOptions;
 use CassandraNative\Compression\CompressorInterface;
@@ -184,12 +185,16 @@ class Cassandra
      */
     protected function establishConnection(ClusterOptions $clusterOptions): void
     {
+        $connected = false;
+        $connectionErrors = [];
         $hosts = $clusterOptions->getHosts();
 
         do {
+            // Choose a random contact host to connect too. If it fails try another one until we run out of hosts to
+            // try connecting too
             $index = array_rand($hosts);
             $host = $hosts[$index];
-            $hosts = array_slice($hosts, $index, 1);
+            array_splice($hosts, $index, 1);
 
             try {
                 $this->socket->connect(
@@ -199,14 +204,15 @@ class Cassandra
                     $clusterOptions->getConnectTimeout()
                 );
 
+                $connected = true;
                 break;
             } catch (ConnectionException $e) {
-                trigger_error($e->getMessage(), E_USER_WARNING);
+                $connectionErrors[$host] = $e->getMessage();
             }
         } while (!empty($hosts));
 
-        if (empty($hosts)) {
-            throw new NoHostsAvailableException('Failed to connect to all hosts in Cassandra cluster');
+        if (!$connected) {
+            throw new NoHostsAvailableException('Failed to connect to all hosts in Cassandra cluster', $connectionErrors);
         }
 
         $sslOptions = $clusterOptions->getSSL();
@@ -329,7 +335,7 @@ class Cassandra
                 $this->handleAuth($this->popString($body, $offset), $authProvider);
                 break;
             default:
-                throw new ProtocolException('Missing READY packet. Got ' . $opcode . ' instead', $opcode);
+                throw new ProtocolException('Missing READY or AUTHENTICATE packet. Got ' . $opcode . ' instead', $opcode);
         }
     }
 
@@ -351,7 +357,7 @@ class Cassandra
             throw new AuthenticationException("Cassandra sent back an auth challenge for $authMechanism which doesn't match the one the client is configured for");
         }
 
-        $authResponseBody = $authProvider->initialResponse();
+        $authResponseBody = $authProvider->response();
         $authResponseBody = $this->packLongString($authResponseBody);
         $this->writeFrame(self::OPCODE_AUTH_RESPONSE, $authResponseBody);
 
@@ -359,27 +365,28 @@ class Cassandra
         $opcode = $frame['opcode'];
         $body = $frame['body'];
 
-        if ($opcode == self::OPCODE_AUTH_SUCCESS) {
-            // The initial auth response can send back a success without a challenge
-            return;
-        }
+        switch ($opcode) {
+            case self::OPCODE_AUTH_SUCCESS:
+                // The initial auth response can send back a success without a challenge
+                return;
+            case self::OPCODE_AUTH_CHALLENGE:
+                if (!($authProvider instanceof AuthChallengeProviderInterface)) {
+                    throw new AuthenticationException("Cassandra issued a challenge response but provider doesn't support challenges");
+                }
 
-        do {
-            if (($authChallengeResponseBody = $authProvider->challengeResponse($body)) === false) {
-                throw new AuthenticationException("Cassandra issued a challenge response but provider doesn't support challenges");
-            }
+                do {
+                    $authChallengeResponseBody = $authProvider->challengeResponse($body);
+                    $authChallengeResponseBody = $this->packLongString($authChallengeResponseBody);
+                    $this->writeFrame(self::OPCODE_AUTH_RESPONSE, $authChallengeResponseBody);
 
-            $authChallengeResponseBody = $this->packLongString($authChallengeResponseBody);
-            $this->writeFrame(self::OPCODE_AUTH_RESPONSE, $authChallengeResponseBody);
-            $frame = $this->readFrame();
-
-            $opcode = $frame['opcode'];
-            $body = $frame['body'];
-
-            if ($opcode == self::OPCODE_AUTH_SUCCESS) {
+                    $frame = $this->readFrame();
+                    $opcode = $frame['opcode'];
+                    $body = $frame['body'];
+                } while ($opcode == self::OPCODE_AUTH_CHALLENGE);
                 break;
-            }
-        } while ($opcode == self::OPCODE_AUTH_CHALLENGE);
+            default:
+                throw new ProtocolException('Missing AUTH_SUCCESS or AUTH_CHALLENGE packet. Got ' . $opcode . ' instead', $opcode);
+        }
     }
 
     /**

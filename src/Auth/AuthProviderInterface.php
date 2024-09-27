@@ -13,19 +13,9 @@ interface AuthProviderInterface
     public function mechanism(): string;
 
     /**
-     * The initial response to an authentication response from a Cassandra node
+     * The response to an authentication response from a Cassandra node
      *
      * @return string
      */
-    public function initialResponse(): string;
-
-    /**
-     * Method called when cassandra issues an authentication challenge after an initial authentication response. Some
-     * authentication providers, such as plaintext auth providers, don't require an auth challenge
-     *
-     * @param string $challenge A string token describing the challenge issued by the cassandra node
-     * @return string|false     A string if the provider can respond to the challenge or false if the provider doesn't
-     *                          support auth challenges
-     */
-    public function challengeResponse(string $challenge): string|false;
+    public function response(): string;
 }

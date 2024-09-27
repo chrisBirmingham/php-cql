@@ -9,7 +9,7 @@ use CassandraNative\SSL\SSLOptions;
 
 class Socket
 {
-    protected bool $persistent;
+    protected bool $persistent = false;
 
     /**
      * @var resource|false
@@ -166,7 +166,7 @@ class Socket
         $this->stream = false;
     }
 
-    function s__destruct()
+    function __destruct()
     {
         if ($this->persistent) {
             return;

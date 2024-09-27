@@ -31,16 +31,8 @@ class PasswordAuthenticator implements AuthProviderInterface
     /**
      * @inheritDoc
      */
-    public function initialResponse(): string
+    public function response(): string
     {
         return "\x00$this->username\x00$this->password";
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function challengeResponse(string $challenge): string|false
-    {
-        return false;
     }
 }
