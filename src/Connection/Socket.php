@@ -85,6 +85,8 @@ class Socket
      * Sets the read and write timeouts
      *
      * @param float $timeout
+     *
+     * @throws ConnectionException
      */
     public function setTimeout(float $timeout): void
     {
@@ -94,7 +96,11 @@ class Socket
 
         $timeoutSeconds = floor($timeout);
         $timeoutMicroseconds = ($timeout - $timeoutSeconds) * 1000000;
-        stream_set_timeout($this->stream, $timeoutSeconds, $timeoutMicroseconds);
+
+        if (!stream_set_timeout($this->stream, $timeoutSeconds, $timeoutMicroseconds)) {
+            fclose($this->stream);
+            throw new ConnectionException('Failed to set socket timeout');
+        }
     }
 
     /**
